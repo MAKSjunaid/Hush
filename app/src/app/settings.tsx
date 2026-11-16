@@ -55,7 +55,7 @@ export default function Settings() {
 
         <Section title="Appearance">
           <View style={{ flexDirection: 'row', gap: 8, paddingVertical: 8 }} accessibilityRole="radiogroup">
-            {(['system', 'light', 'dark'] as ThemeMode[]).map((m) => (
+            {(['dark', 'light', 'system'] as ThemeMode[]).map((m) => (
               <Pressable
                 key={m}
                 accessibilityRole="radio"
