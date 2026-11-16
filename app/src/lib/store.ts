@@ -56,6 +56,7 @@ export type AppConfig = {
   iosUrl: string | null;
   mediaEnabled: boolean;
   editWindowMinutes?: number;
+  vapidPublicKey?: string | null;
 };
 
 type State = {
@@ -793,10 +794,28 @@ export function dismissAnnouncement() {
 // ---------- push ----------
 async function registerPush() {
   try {
+    // Web (installed PWA): if the user already granted notifications, keep the server subscription fresh.
+    // The first opt-in needs a user tap (see enableNotifications), which Settings triggers.
+    const { refreshWebPush } = await import('./webpush');
+    await refreshWebPush(state.config?.vapidPublicKey);
+  } catch {}
+  try {
     const { registerForPush } = await import('./push');
     const token = await registerForPush();
     if (token) await api('/me/push-token', { body: { token } });
   } catch {}
+}
+
+/** Turn notifications on from a user tap (required on iOS). Subscribes the installed PWA to Web Push. */
+export async function enableNotifications(): Promise<boolean> {
+  if (!state.config) await loadConfig();
+  const { enableWebPush } = await import('./webpush');
+  return enableWebPush(state.config?.vapidPublicKey);
+}
+
+export async function disableNotifications(): Promise<void> {
+  const { disableWebPush } = await import('./webpush');
+  await disableWebPush();
 }
 
 export { decodeBase64 };
