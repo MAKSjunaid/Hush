@@ -84,8 +84,8 @@ export const fonts = {
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-type Ctx = { c: Palette; mode: ThemeMode; setMode: (m: ThemeMode) => void };
-const ThemeCtx = createContext<Ctx>({ c: darkPalette, mode: 'dark', setMode: () => {} });
+type Ctx = { c: Palette; mode: ThemeMode; isDark: boolean; setMode: (m: ThemeMode) => void };
+const ThemeCtx = createContext<Ctx>({ c: darkPalette, mode: 'dark', isDark: true, setMode: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useColorScheme();
@@ -102,6 +102,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return {
       c: isDark ? darkPalette : lightPalette,
       mode,
+      isDark,
       setMode: (m) => {
         setModeState(m);
         AsyncStorage.setItem('hush.theme', m);
