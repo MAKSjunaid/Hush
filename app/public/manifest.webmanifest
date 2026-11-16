@@ -1,6 +1,6 @@
 {
-  "name": "Hush",
-  "short_name": "Hush",
+  "name": "HushChat",
+  "short_name": "HushChat",
   "description": "Private chat. Messages vanish once seen.",
   "start_url": "/",
   "scope": "/",
