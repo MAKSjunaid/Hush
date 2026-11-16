@@ -74,6 +74,7 @@ export function publicUser(u) {
     username: u.username,
     displayName: u.display_name,
     publicKey: u.public_key,
+    avatarAt: u.avatar_at || null, // null = no photo; otherwise a cache-busting timestamp
   };
 }
 
