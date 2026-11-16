@@ -1,0 +1,11 @@
+{
+  "name": "hush",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix server install && npm --prefix app install",
+    "server": "npm --prefix server run dev",
+    "app": "npm --prefix app start",
+    "web": "npm --prefix app run web",
+    "build:web": "npm --prefix app run build:web"
+  }
+}
