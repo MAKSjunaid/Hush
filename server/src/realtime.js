@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
-import { q, one, bumpStat, getSetting } from './db.js';
+import { q, one, bumpStat, getSettingSync, getUser, cacheUser } from './db.js';
+import { TTLCache, registerCache } from './cache.js';
 import { userFromToken } from './auth.js';
 import { pushNewMessage } from './push.js';
 import { deleteMedia } from './storage.js';
@@ -48,7 +49,22 @@ export function serializeMessage(m, viewerId) {
   };
 }
 
+// "Can these two message each other?" and "who are my contacts?" are asked on every message,
+// typing event and presence change, so they're answered from memory and refreshed on changes.
+const pairCache = registerCache(new TTLCache({ ttlMs: 10 * 60_000, max: 20_000 }));
+const contactsCache = registerCache(new TTLCache({ ttlMs: 10 * 60_000, max: 10_000 }));
+const pairKey = (a, b) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+export function invalidatePair(a, b) {
+  pairCache.delete(pairKey(a, b));
+  contactsCache.delete(a);
+  contactsCache.delete(b);
+}
+
 export async function canMessage(a, b) {
+  if (!a || !b || a === b) return false;
+  const key = pairKey(a, b);
+  const hit = pairCache.get(key);
+  if (hit !== undefined) return hit;
   const row = await one(
     `SELECT
        EXISTS (SELECT 1 FROM connections
@@ -58,16 +74,18 @@ export async function canMessage(a, b) {
                WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)) AS blocked`,
     [a, b],
   );
-  return row.connected && !row.blocked;
+  return pairCache.set(key, Boolean(row.connected && !row.blocked));
 }
 
 async function contactsOf(userId) {
+  const hit = contactsCache.get(userId);
+  if (hit) return hit;
   const { rows } = await q(
     `SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS id
        FROM connections WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1)`,
     [userId],
   );
-  return rows.map((r) => r.id);
+  return contactsCache.set(userId, rows.map((r) => r.id));
 }
 
 async function broadcastPresence(user, isOn) {
@@ -85,22 +103,49 @@ async function vanish(rows) {
   }
 }
 
-/** Deletes expired messages every few seconds and tells both phones. */
+/**
+ * Deletes expired messages and tells both phones.
+ * The database is only queried when something is actually due (or every 30 min as a safety net),
+ * so an idle Hush makes no database calls and Neon can sleep.
+ */
+let nextSweepAt = 0;
+let sweeping = false;
+export function scheduleSweep(at) {
+  const t = new Date(at).getTime();
+  if (Number.isFinite(t) && t < nextSweepAt) nextSweepAt = t;
+}
+async function sweep() {
+  if (sweeping) return;
+  sweeping = true;
+  try {
+    const { rows } = await q(
+      'DELETE FROM messages WHERE expires_at <= now() RETURNING id, sender_id, recipient_id, media_key',
+    );
+    if (rows.length) await vanish(rows);
+    const next = await one('SELECT min(expires_at) AS at FROM messages');
+    const safety = Date.now() + 30 * 60_000;
+    nextSweepAt = next?.at ? Math.min(new Date(next.at).getTime() + 250, safety) : safety;
+  } catch (e) {
+    console.warn('[sweeper]', e.message);
+    nextSweepAt = Date.now() + 60_000;
+  } finally {
+    sweeping = false;
+  }
+}
 function startSweeper() {
-  setInterval(async () => {
-    try {
-      const { rows } = await q(
-        'DELETE FROM messages WHERE expires_at <= now() RETURNING id, sender_id, recipient_id, media_key',
-      );
-      if (rows.length) await vanish(rows);
-    } catch (e) {
-      console.warn('[sweeper]', e.message);
-    }
-  }, 4000);
+  nextSweepAt = Date.now() + 5000; // first pass once the database is ready
+  setInterval(() => {
+    if (Date.now() >= nextSweepAt) sweep();
+  }, 1000).unref();
 }
 
 function rateLimiter(limit, windowMs) {
   const hits = new Map();
+  // forget idle users so the map never grows without bound
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, arr] of hits) if (!arr.length || now - arr[arr.length - 1] > windowMs) hits.delete(k);
+  }, 60_000).unref();
   return (key) => {
     const now = Date.now();
     const arr = (hits.get(key) || []).filter((t) => now - t < windowMs);
@@ -111,6 +156,28 @@ function rateLimiter(limit, windowMs) {
 }
 const sendLimit = rateLimiter(30, 10_000);
 const eventLimit = rateLimiter(60, 10_000);
+
+// Who might have undelivered messages: anyone a message was queued for, plus everyone once after a restart.
+const pendingFor = new Set();
+const checkedSinceBoot = registerCache(new TTLCache({ ttlMs: 24 * 3600_000, max: 50_000 }));
+function mayHavePending(userId) {
+  const yes = pendingFor.has(userId) || !checkedSinceBoot.get(userId);
+  pendingFor.delete(userId);
+  checkedSinceBoot.set(userId, true);
+  return yes;
+}
+
+// Last-active + daily-active tracking: at most one small write per user every 5 minutes.
+const lastTouch = registerCache(new TTLCache({ ttlMs: 5 * 60_000, max: 20_000 }));
+async function touchActive(userId) {
+  if (lastTouch.get(userId)) return;
+  lastTouch.set(userId, true);
+  await q(
+    `WITH u AS (UPDATE users SET last_active_at = now() WHERE id = $1)
+     INSERT INTO user_activity (user_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+    [userId],
+  ).catch(() => {});
+}
 
 export function attachRealtime(httpServer) {
   io = new Server(httpServer, {
@@ -133,20 +200,21 @@ export function attachRealtime(httpServer) {
     if (first) online.set(userId, new Set());
     online.get(userId).add(socket.id);
 
-    const me = await one('SELECT * FROM users WHERE id = $1', [userId]);
-    await q('UPDATE users SET last_active_at = now() WHERE id = $1', [userId]);
-    await q('INSERT INTO user_activity (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [userId]);
-    if (first) broadcastPresence(me, true);
+    const me = await getUser(userId);
+    await touchActive(userId);
+    if (first && me) broadcastPresence(me, true);
 
-    // Everything waiting for this user is now delivered.
-    const { rows: delivered } = await q(
-      `UPDATE messages SET delivered_at = now()
-        WHERE recipient_id = $1 AND delivered_at IS NULL RETURNING id, sender_id, delivered_at`,
-      [userId],
-    );
-    for (const d of delivered) emitTo(d.sender_id, 'delivered', { id: d.id, at: d.delivered_at });
+    // Everything waiting for this user is now delivered (only queried if something may be waiting).
+    if (mayHavePending(userId)) {
+      const { rows: delivered } = await q(
+        `UPDATE messages SET delivered_at = now()
+          WHERE recipient_id = $1 AND delivered_at IS NULL RETURNING id, sender_id, delivered_at`,
+        [userId],
+      );
+      for (const d of delivered) emitTo(d.sender_id, 'delivered', { id: d.id, at: d.delivered_at });
+    }
 
-    const announcement = await getSetting('announcement', null);
+    const announcement = getSettingSync('announcement', null);
     if (announcement?.text) socket.emit('announcement', announcement);
 
     const guard = (fn) => async (payload, ack) => {
@@ -170,8 +238,8 @@ export function attachRealtime(httpServer) {
       if (String(p.ciphertext).length > 20_000) return reply({ error: 'Message too long' });
       if (!(await canMessage(userId, to))) return reply({ error: 'You can only message accepted contacts' });
 
-      const sender = await one('SELECT public_key FROM users WHERE id = $1', [userId]);
-      const recipient = await one('SELECT * FROM users WHERE id = $1', [to]);
+      const sender = await getUser(userId);
+      const recipient = await getUser(to);
       const deliveredNow = isOnline(to);
 
       const row = await one(
@@ -179,7 +247,8 @@ export function attachRealtime(httpServer) {
                                sender_public_key, media_key, reply_to, view_once, timer_seconds, delivered_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, CASE WHEN $14 THEN now() END)
          ON CONFLICT (sender_id, client_id) DO NOTHING
-         RETURNING *`,
+         RETURNING id, client_id, sender_id, recipient_id, kind, ciphertext, nonce, self_ciphertext, self_nonce,
+                   sender_public_key, media_key, reply_to, view_once, timer_seconds, created_at, delivered_at, seen_at, expires_at`,
         [
           String(p.clientId || '').slice(0, 64) || null, userId, to, kind, p.ciphertext, p.nonce, p.selfCiphertext,
           p.selfNonce, sender.public_key, p.mediaKey || null, p.replyTo || null, Boolean(p.viewOnce) || kind === 'photo',
@@ -192,7 +261,10 @@ export function attachRealtime(httpServer) {
       reply({ message: serializeMessage(row, userId) });
       emitTo(userId, 'message', serializeMessage(row, userId));
       emitTo(to, 'message', serializeMessage(row, to));
-      if (!deliveredNow) pushNewMessage(recipient, kind);
+      if (!deliveredNow) {
+        pendingFor.add(to);
+        pushNewMessage(recipient, kind);
+      }
     }));
 
     socket.on('seen', guard(async (p, reply) => {
@@ -222,6 +294,7 @@ export function attachRealtime(httpServer) {
             WHERE id = $1 RETURNING expires_at`,
           [r.id, r.timer_seconds],
         );
+        scheduleSweep(expires_at);
         emitTo(r.sender_id, 'seen', { id: r.id, at: now, expiresAt: expires_at });
         emitTo(r.recipient_id, 'seen', { id: r.id, at: now, expiresAt: expires_at });
       }
@@ -266,7 +339,8 @@ export function attachRealtime(httpServer) {
       if (!(await canMessage(userId, other))) return reply({ error: 'Not a contact' });
       const row = await one(
         `INSERT INTO messages (sender_id, recipient_id, kind, delivered_at, seen_at, expires_at)
-         VALUES ($1, $2, $3, now(), now(), now() + interval '24 hours') RETURNING *`,
+         VALUES ($1, $2, $3, now(), now(), now() + interval '24 hours')
+         RETURNING id, sender_id, recipient_id, kind, created_at, delivered_at, seen_at, expires_at`,
         [userId, other, kind],
       );
       if (kind === 'screenshot') bumpStat('screenshots');
@@ -283,9 +357,11 @@ export function attachRealtime(httpServer) {
         set.delete(socket.id);
         if (set.size === 0) {
           online.delete(userId);
-          await q('UPDATE users SET last_active_at = now() WHERE id = $1', [userId]).catch(() => {});
-          const fresh = await one('SELECT * FROM users WHERE id = $1', [userId]).catch(() => null);
-          if (fresh) broadcastPresence(fresh, false);
+          const fresh = await one('UPDATE users SET last_active_at = now() WHERE id = $1 RETURNING *', [userId]).catch(() => null);
+          if (fresh) {
+            cacheUser(fresh);
+            broadcastPresence(fresh, false);
+          }
         }
       }
     });
