@@ -1,0 +1,93 @@
+{
+  "expo": {
+    "name": "Hush",
+    "slug": "hush",
+    "scheme": "hush",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#0B0B0F",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.hush.chat",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Hush uses Face ID to unlock your chats.",
+        "NSPhotoLibraryUsageDescription": "Hush needs access to send view-once photos.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "app.hush.chat",
+      "adaptiveIcon": {
+        "backgroundColor": "#8B7CFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "POST_NOTIFICATIONS",
+        "DETECT_SCREEN_CAPTURE"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single",
+      "name": "Hush",
+      "shortName": "Hush",
+      "description": "Private chat. Messages vanish once seen.",
+      "themeColor": "#0B0B0F",
+      "backgroundColor": "#0B0B0F",
+      "display": "standalone",
+      "startUrl": "/"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120,
+          "backgroundColor": "#F7F7FA",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0B0B0F"
+          }
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Hush uses Face ID to unlock your chats."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#8B7CFF"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Hush needs access to send view-once photos."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "apiUrl": "http://localhost:4000"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}
