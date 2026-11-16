@@ -1,10 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Avatar, IconButton, Screen, T, tap, ThemeToggle } from '@/components/ui';
+import { Avatar, Button, IconButton, Screen, Sheet, T, tap, ThemeToggle } from '@/components/ui';
+import { SwipeRow } from '@/components/SwipeRow';
 import { fonts, useTheme } from '@/lib/theme';
-import { dismissAnnouncement, Msg, peerOf, useStore, Conn } from '@/lib/store';
+import { deleteChat, dismissAnnouncement, Msg, peerOf, useStore, Conn } from '@/lib/store';
 import { shortWhen } from '@/lib/format';
 
 type Row = { conn: Conn; last?: Msg; unread: number; typing: boolean; at: string };
@@ -18,6 +19,8 @@ export default function Chats() {
   const typing = useStore((s) => s.typing);
   const connected = useStore((s) => s.connected);
   const announcement = useStore((s) => s.config?.announcement);
+  const [toDelete, setToDelete] = useState<Conn['user'] | null>(null);
+  const [busy, setBusy] = useState(false);
   const dismissed = useStore((s) => s.announcementDismissed);
 
   const rows = useMemo<Row[]>(() => {
@@ -124,13 +127,14 @@ export default function Chats() {
           const st = status(item);
           const u = item.conn.user;
           return (
-            <Pressable
+            <SwipeRow
               onPress={() => {
                 tap();
                 router.push(`/chat/${u.id}`);
               }}
-              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: pressed ? c.surface2 : 'transparent' })}
+              onDelete={() => setToDelete(u)}
             >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, paddingHorizontal: 24 }}>
               <Avatar name={u.username} online={u.online} />
               <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
@@ -150,10 +154,33 @@ export default function Chats() {
                   {item.unread ? <Badge n={item.unread} /> : null}
                 </View>
               </View>
-            </Pressable>
+            </View>
+            </SwipeRow>
           );
         }}
       />
+
+      <Sheet visible={!!toDelete} onClose={() => setToDelete(null)} title="Delete this chat?">
+        <T variant="small">Every message with @{toDelete?.username} will be deleted for both of you. This can't be undone. You'll still be connected.</T>
+        <View style={{ gap: 10, marginTop: 14 }}>
+          <Button
+            title="Delete for both"
+            variant="danger"
+            loading={busy}
+            onPress={async () => {
+              if (!toDelete) return;
+              setBusy(true);
+              try {
+                await deleteChat(toDelete.id);
+              } finally {
+                setBusy(false);
+                setToDelete(null);
+              }
+            }}
+          />
+          <Button title="Cancel" variant="secondary" onPress={() => setToDelete(null)} />
+        </View>
+      </Sheet>
 
       <Pressable
         accessibilityRole="button"
