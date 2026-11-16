@@ -6,13 +6,13 @@
       "distribution": "internal",
       "channel": "preview",
       "android": { "buildType": "apk" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://YOUR-RENDER-APP.onrender.com" }
+      "env": { "EXPO_PUBLIC_API_URL": "https://hush-d3bj.onrender.com" }
     },
     "production": {
       "channel": "production",
       "autoIncrement": true,
       "android": { "buildType": "apk" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://YOUR-RENDER-APP.onrender.com" }
+      "env": { "EXPO_PUBLIC_API_URL": "https://hush-d3bj.onrender.com" }
     }
   },
   "submit": { "production": {} }
