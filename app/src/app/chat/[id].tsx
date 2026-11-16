@@ -523,20 +523,22 @@ function MessageItem({
   const incomingTimed = !mine && m.timer && m.expiresAt && m.seenAt;
 
   const photoViewed = !mine && !!m.readLocally;
+  const mineViewed = mine && m.status === 'seen'; // they opened the view-once photo I sent — it's gone now
+  const photoGone = photoViewed || mineViewed;
   const body = m.payload?.t === 'photo' ? (
     <Pressable
       onPress={mine || photoViewed ? undefined : onOpenPhoto}
       onLongPress={onLongPress}
       accessibilityRole={mine || photoViewed ? 'text' : 'button'}
-      accessibilityLabel={mine ? 'View-once photo you sent' : photoViewed ? 'Photo already opened and gone' : 'View-once photo. Tap to open'}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, width: 230, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface2, opacity: photoViewed ? 0.6 : 1, ...(mine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) }}
+      accessibilityLabel={mineViewed ? 'View-once photo you sent, now opened and gone' : mine ? 'View-once photo you sent' : photoViewed ? 'Photo already opened and gone' : 'View-once photo. Tap to open'}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, width: 230, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface2, opacity: photoGone ? 0.6 : 1, ...(mine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) }}
     >
       <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: c.accentSoft, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name={photoViewed ? 'eye-off-outline' : 'image-outline'} size={20} color={c.accentText} />
+        <Ionicons name={photoGone ? 'eye-off-outline' : 'image-outline'} size={20} color={c.accentText} />
       </View>
       <View style={{ flex: 1 }}>
         <T style={{ fontFamily: fonts.semibold, fontSize: 14 }}>Photo · view once</T>
-        <T variant="small" style={{ fontSize: 12 }}>{mine ? 'Gone once they open it' : photoViewed ? 'Opened · no longer available' : 'Tap to open'}</T>
+        <T variant="small" style={{ fontSize: 12 }}>{mine ? (mineViewed ? 'Opened · no longer available' : 'Gone once they open it') : photoViewed ? 'Opened · no longer available' : 'Tap to open'}</T>
       </View>
     </Pressable>
   ) : (
