@@ -150,6 +150,20 @@ export function IconButton({
   );
 }
 
+/** One tap switches between night and day. The choice is remembered on this device. */
+export function ThemeToggle({ style }: { style?: StyleProp<ViewStyle> }) {
+  const { isDark, setMode, c } = useTheme();
+  return (
+    <IconButton
+      icon={isDark ? 'sunny-outline' : 'moon-outline'}
+      label={isDark ? 'Switch to day mode' : 'Switch to night mode'}
+      color={c.text}
+      style={style}
+      onPress={() => setMode(isDark ? 'light' : 'dark')}
+    />
+  );
+}
+
 export function Field({
   label, prefix, right, error, hint, hintColor, focusColor, ...input
 }: TextInputProps & {
