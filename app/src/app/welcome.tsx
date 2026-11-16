@@ -2,7 +2,7 @@ import React from 'react';
 import { Linking, Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, Logo, Notice, Screen, T, IconName } from '@/components/ui';
+import { Button, Logo, Notice, Screen, T, IconName, ThemeToggle } from '@/components/ui';
 import { useTheme } from '@/lib/theme';
 import { useStore } from '@/lib/store';
 import { API_URL } from '@/lib/config';
@@ -27,7 +27,10 @@ export default function Welcome() {
     <Screen>
       <View style={{ flex: 1, justifyContent: 'center', gap: 32, paddingVertical: 24 }}>
         <View style={{ gap: 18 }}>
-          <Logo size={64} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Logo size={64} />
+            <ThemeToggle />
+          </View>
           <View style={{ gap: 8 }}>
             <T variant="title" style={{ fontSize: 40, lineHeight: 46 }}>Say less.{'\n'}Leave no trace.</T>
             <T variant="body" color={c.muted}>Private chat where messages vanish the moment they're seen.</T>

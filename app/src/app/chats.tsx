@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { FlatList, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Avatar, IconButton, Screen, T, tap } from '@/components/ui';
+import { Avatar, IconButton, Screen, T, tap, ThemeToggle } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
 import { dismissAnnouncement, Msg, peerOf, useStore, Conn } from '@/lib/store';
 import { shortWhen } from '@/lib/format';
@@ -63,7 +63,10 @@ export default function Chats() {
           <T variant="title">Chats</T>
           {!connected ? <T variant="small" color={c.faint}>connecting…</T> : null}
         </View>
-        <IconButton icon="shield-checkmark-outline" label="Privacy and settings" onPress={() => router.push('/settings')} />
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <ThemeToggle />
+          <IconButton icon="shield-checkmark-outline" label="Privacy and settings" onPress={() => router.push('/settings')} />
+        </View>
       </View>
 
       <FlatList
