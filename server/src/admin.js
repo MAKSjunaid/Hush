@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { verifySync } from 'otplib';
 import { config } from './config.js';
-import { q, one, pool, getSetting, setSetting } from './db.js';
+import { q, one, pool, getSetting, setSetting, forgetUser, flushStats } from './db.js';
 import { kickUser, emitTo, onlineCount } from './realtime.js';
 import { mediaEnabled } from './storage.js';
 
@@ -49,6 +49,7 @@ async function log(adminName, action, detail) {
 
 // Counts only. Message contents are end-to-end encrypted and never visible here.
 admin.get('/stats', wrap(async (_req, res) => {
+  await flushStats();
   const s = await one(`
     SELECT
       (SELECT count(*) FROM users)::int AS total_users,
@@ -115,6 +116,7 @@ admin.post('/users/:id/status', wrap(async (req, res) => {
   const status = ['active', 'suspended', 'banned'].includes(req.body.status) ? req.body.status : null;
   if (!status) return res.status(400).json({ error: 'Bad status' });
   const u = await one('UPDATE users SET status = $2 WHERE id = $1 RETURNING username', [req.params.id, status]);
+  forgetUser(req.params.id);
   if (status !== 'active') kickUser(req.params.id, 'account_' + status);
   await log(req.admin, 'set_status', { user: u?.username, status });
   res.json({ ok: true });

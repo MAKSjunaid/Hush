@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { config } from './config.js';
-import { one } from './db.js';
+import { getUser } from './db.js';
 
 export const USERNAME_RE = /^[a-z0-9](?:[a-z0-9._]{1,22})[a-z0-9]$/; // 3–24 chars
 export const RESERVED = new Set([
@@ -52,7 +52,7 @@ export async function userFromToken(token) {
   } catch {
     return null;
   }
-  const user = await one('SELECT * FROM users WHERE id = $1', [payload.sub]);
+  const user = await getUser(payload.sub);
   if (!user || user.token_version !== payload.tv) return null;
   if (user.status !== 'active') return { ...user, blockedStatus: user.status };
   return user;

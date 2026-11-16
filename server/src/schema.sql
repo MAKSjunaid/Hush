@@ -106,3 +106,11 @@ CREATE TABLE IF NOT EXISTS admin_logs (
   detail      jsonb,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- Extra indexes for the lookups the server does most.
+CREATE INDEX IF NOT EXISTS messages_media_key_idx ON messages (media_key) WHERE media_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS messages_undelivered_idx ON messages (recipient_id) WHERE delivered_at IS NULL;
+CREATE INDEX IF NOT EXISTS reports_status_idx ON reports (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS reports_reported_idx ON reports (reported_id);
+CREATE INDEX IF NOT EXISTS blocks_blocked_idx ON blocks (blocked_id);
+CREATE INDEX IF NOT EXISTS user_activity_day_idx ON user_activity (day);

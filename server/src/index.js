@@ -4,8 +4,9 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import { config } from './config.js';
-import { migrate, getSetting, pool } from './db.js';
+import { migrate, getSetting, getSettingSync, shutdown } from './db.js';
 import { api } from './routes.js';
 import { admin } from './admin.js';
 import { attachRealtime } from './realtime.js';
@@ -14,22 +15,17 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.set('trust proxy', 1); // Render sits behind a proxy
 app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
+app.use(compression({ threshold: 1024 }));
 app.use(cors({ origin: config.corsOrigins.includes('*') ? true : config.corsOrigins }));
 app.use(express.json({ limit: '64kb' }));
 
-app.get('/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ ok: true });
-  } catch {
-    res.status(503).json({ ok: false });
-  }
-});
+// Render pings this often: answer from memory so it never wakes the database.
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Maintenance mode: app API pauses, admin keeps working.
 app.use('/api', async (req, res, next) => {
   if (req.path === '/config') return next();
-  if (await getSetting('maintenance', false)) {
+  if (getSettingSync('maintenance', false)) {
     return res.status(503).json({ error: 'Hush is under maintenance. Please try again soon.', maintenance: true });
   }
   next();
@@ -56,10 +52,20 @@ app.use('/downloads', express.static(path.join(dir, '..', 'public', 'downloads')
 
 // The web/PWA version of the app (built from /app with `npm run build:web`).
 const webDir = path.join(dir, '..', 'public', 'web');
-app.use(express.static(webDir, { index: 'index.html', maxAge: '1h' }));
-app.get(/^\/(?!api|admin|socket\.io).*/, (_req, res, next) =>
-  res.sendFile(path.join(webDir, 'index.html'), (err) => err && next()),
-);
+// Hashed app bundles never change → cache for a year. index.html / sw.js always revalidate.
+app.use('/_expo', express.static(path.join(webDir, '_expo'), { maxAge: '365d', immutable: true }));
+app.use('/assets', express.static(path.join(webDir, 'assets'), { maxAge: '30d' }));
+app.use(express.static(webDir, {
+  index: 'index.html',
+  maxAge: '1d',
+  setHeaders: (res, file) => {
+    if (/index\.html$|sw\.js$|manifest\.webmanifest$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
+app.get(/^\/(?!api|admin|socket\.io).*/, (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(webDir, 'index.html'), (err) => err && next());
+});
 app.get('/', (_req, res) => res.type('text').send('Hush server is running. Build the web app to serve it here.'));
 
 app.use((err, _req, res, _next) => {
@@ -69,6 +75,14 @@ app.use((err, _req, res, _next) => {
 
 const server = http.createServer(app);
 attachRealtime(server);
+
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    server.close();
+    await shutdown();
+    process.exit(0);
+  });
+}
 
 migrate()
   .then(() => server.listen(config.port, () => console.log(`[hush] server on http://localhost:${config.port}`)))
