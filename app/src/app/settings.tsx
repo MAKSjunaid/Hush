@@ -5,8 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, Field, Header, Row, Screen, Sheet, T, Toggle, tap } from '@/components/ui';
 import { fonts, ThemeMode, useTheme } from '@/lib/theme';
 import {
-  avatarUrl, changePassword, changeUsername, deleteAccount, listBlocked, logout, Me, removeAvatar, setAvatar,
-  unblockUser, updateMe, useStore, User,
+  avatarUrl, changePassword, changeUsername, deleteAccount, disableNotifications, enableNotifications,
+  listBlocked, logout, Me, removeAvatar, setAvatar, unblockUser, updateMe, useStore, User,
 } from '@/lib/store';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -111,7 +111,19 @@ export default function Settings() {
         </Section>
 
         <Section title="Notifications">
-          <Toggle label="Message notifications" sub={'Only ever says "New message" — never the text'} value={s.notifications !== false} onChange={(v) => setPref('notifications', v)} />
+          <Toggle
+            label="Message notifications"
+            sub={'Only ever says "New message" — never the text'}
+            value={s.notifications !== false}
+            onChange={async (v) => {
+              setPref('notifications', v);
+              // On web/PWA, turning this on is the user tap iOS needs to grant permission + subscribe.
+              if (isWeb) {
+                if (v) await enableNotifications();
+                else await disableNotifications();
+              }
+            }}
+          />
         </Section>
 
         <Section title="HushChat">
