@@ -12,7 +12,7 @@ const head = `
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hush">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
-<style>html,body{overflow-x:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%;touch-action:manipulation}input,textarea{font-size:16px}body{background:#0B0B0F}</style>`;
+<style>html,body{overflow-x:hidden;overscroll-behavior:none;-webkit-text-size-adjust:100%;text-size-adjust:100%;touch-action:manipulation}input,textarea{font-size:16px}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus{transition:background-color 600000s 0s,color 600000s 0s}body{background:#0B0B0F}</style>`;
 const sw = `<script>if('serviceWorker' in navigator){addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))}</script>`;
 if (!html.includes('manifest.webmanifest')) {
   html = html.replace(/<meta name="viewport"[^>]*>/, '').replace('</head>', `${head}\n</head>`).replace('</body>', `${sw}\n</body>`);
