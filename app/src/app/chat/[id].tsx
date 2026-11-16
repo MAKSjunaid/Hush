@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Row, Sheet, T, tap } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
 import {
-  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping, sendTypingText, markPhotoViewed,
+  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping, sendTypingText, markPhotoViewed, avatarUrl,
   reportScreenshot, setChatTimer, blockUser, report, removeContact, getState, decodeBase64,
 } from '@/lib/store';
 import { encodeBase64, safetyCode } from '@/lib/crypto';
@@ -85,6 +85,12 @@ export default function Chat() {
     viewerOpen.current = !!viewer;
     if (!viewer) seeVisible();
   }, [viewer, seeVisible]);
+
+  // Revoke the decrypted blob: URL if we leave the chat with the viewer still open.
+  useEffect(() => () => {
+    const u = viewer?.uri;
+    if (u && u.startsWith('blob:')) URL.revokeObjectURL(u);
+  }, [viewer?.uri]);
 
   useEffect(() => {
     setOpenChat(peerId);
@@ -171,7 +177,13 @@ export default function Chat() {
     try {
       const bytes = await fetchPhoto(m);
       if (!bytes) throw new Error('This photo is gone');
-      setViewer({ msg: m, uri: `data:image/jpeg;base64,${encodeBase64(bytes)}`, loading: false });
+      // On web, hand the <img> a blob: URL we can revoke on close, so the decrypted image
+      // can't be re-opened from that URL afterwards (a data: URL would linger). On native a
+      // data: URI is fine. Either way it only ever lives in this page's memory, never on disk.
+      const uri = isWeb
+        ? URL.createObjectURL(new Blob([bytes as any], { type: 'image/jpeg' }))
+        : `data:image/jpeg;base64,${encodeBase64(bytes)}`;
+      setViewer({ msg: m, uri, loading: false });
     } catch (e: any) {
       markPhotoViewed(m.id);
       setViewer({ msg: m, uri: null, loading: false, error: e.message });
@@ -179,6 +191,7 @@ export default function Chat() {
   };
 
   const closeViewer = () => {
+    if (viewer?.uri && viewer.uri.startsWith('blob:')) URL.revokeObjectURL(viewer.uri);
     if (viewer?.msg) {
       markSeen([viewer.msg.id]); // view once: gone for both
       markPhotoViewed(viewer.msg.id); // and show it as opened here, no longer tappable
@@ -194,7 +207,7 @@ export default function Chat() {
         {/* header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border }}>
           <IconButton icon="chevron-back" label="Back to chats" onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/chats'); }} />
-          <Avatar name={peer.username} size={40} online={peer.online} />
+          <Avatar name={peer.username} size={40} online={peer.online} uri={avatarUrl(peer)} />
           <View style={{ flex: 1, minWidth: 0, marginLeft: 6 }}>
             <T variant="bodyStrong" numberOfLines={1}>{peer.displayName !== peer.username ? peer.displayName : peer.username}</T>
             {sub ? <T variant="small" style={{ fontSize: 12 }} color={typing || peer.online ? c.success : c.faint}>{sub}</T> : null}
