@@ -1,0 +1,33 @@
+# One-click Render setup: Render → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: hush
+    runtime: node
+    region: singapore
+    plan: free            # switch to "starter" ($7/mo) so it never sleeps
+    buildCommand: cd app && npm ci && npm run build:web && cd ../server && npm ci --omit=dev
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: EXPO_NO_TELEMETRY
+        value: "1"
+      - key: DATABASE_URL
+        sync: false         # paste your Neon URL in the Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_TOTP_SECRET
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: hush-media
