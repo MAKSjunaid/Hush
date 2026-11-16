@@ -183,6 +183,7 @@ export default function Chat() {
       const uri = isWeb
         ? URL.createObjectURL(new Blob([bytes as any], { type: 'image/jpeg' }))
         : `data:image/jpeg;base64,${encodeBase64(bytes)}`;
+      markSeen([m.id]); // tell the sender it's been opened the moment it opens, not on close
       setViewer({ msg: m, uri, loading: false });
     } catch (e: any) {
       markPhotoViewed(m.id);
@@ -192,10 +193,7 @@ export default function Chat() {
 
   const closeViewer = () => {
     if (viewer?.uri && viewer.uri.startsWith('blob:')) URL.revokeObjectURL(viewer.uri);
-    if (viewer?.msg) {
-      markSeen([viewer.msg.id]); // view once: gone for both
-      markPhotoViewed(viewer.msg.id); // and show it as opened here, no longer tappable
-    }
+    if (viewer?.msg) markPhotoViewed(viewer.msg.id); // mark it opened here, no longer tappable
     setViewer(null);
   };
 
