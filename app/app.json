@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Hush",
+    "name": "HushChat",
     "slug": "hush",
     "scheme": "hush",
     "version": "1.0.0",
@@ -37,8 +37,8 @@
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
       "output": "single",
-      "name": "Hush",
-      "shortName": "Hush",
+      "name": "HushChat",
+      "shortName": "HushChat",
       "description": "Private chat. Messages vanish once seen.",
       "themeColor": "#0B0B0F",
       "backgroundColor": "#0B0B0F",
@@ -54,7 +54,7 @@
         {
           "image": "./assets/splash-icon.png",
           "imageWidth": 120,
-          "backgroundColor": "#F7F7FA",
+          "backgroundColor": "#0B0B0F",
           "dark": {
             "image": "./assets/splash-icon.png",
             "backgroundColor": "#0B0B0F"
