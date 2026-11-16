@@ -126,3 +126,16 @@ ALTER TABLE media ALTER COLUMN data SET STORAGE EXTERNAL; -- already encrypted: 
 
 -- Message editing (sender can fix a typo for a few minutes; window set in admin, default 15 min)
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at timestamptz;
+
+-- Profile pictures: one small, resized image per user, stored once. Not message content, so not E2E
+-- encrypted — a contact who can message you can see your avatar, same as your name. avatar_at on the
+-- user row (NULL = none) lets us expose "has a photo, changed at T" for cache-busting without ever
+-- loading the bytes in the common SELECT * user queries.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_at timestamptz;
+CREATE TABLE IF NOT EXISTS avatars (
+  user_id     uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  data        bytea NOT NULL,
+  mime        text NOT NULL DEFAULT 'image/jpeg',
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE avatars ALTER COLUMN data SET STORAGE EXTERNAL;
