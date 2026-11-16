@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Row, Sheet, T, tap } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
 import {
-  Msg, peerOf, useStore, markSeen, purgeRead, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping,
+  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping,
   reportScreenshot, setChatTimer, blockUser, report, removeContact, getState, decodeBase64,
 } from '@/lib/store';
 import { encodeBase64, safetyCode } from '@/lib/crypto';
@@ -77,13 +77,15 @@ export default function Chat() {
   }, [list.length, seeVisible]);
 
   useEffect(() => {
+    setOpenChat(peerId);
     const sub = AppState.addEventListener('change', (s) => {
       appActive.current = s === 'active';
       if (s === 'active') seeVisible();
     });
     return () => {
       sub.remove();
-      purgeRead(peerId); // leaving the chat: messages you've read are gone
+      setOpenChat(null);
+      purgeRead(peerId); // leaving the chat: messages that were seen are gone (both sides)
       sendTyping(peerId, false);
     };
   }, [peerId, seeVisible]);
@@ -418,7 +420,7 @@ function MessageItem({
   const status =
     m.status === 'sending' ? 'Sending…'
       : m.status === 'failed' ? 'Not sent · tap to retry'
-        : m.vanishing ? 'Seen · vanishing'
+        : m.vanishing ? 'Seen · gone when you leave'
           : m.status === 'seen' && m.timer && m.expiresAt ? `Seen · vanishes in ${countdown(m.expiresAt)}`
             : m.status === 'seen' ? 'Seen'
               : m.status === 'delivered' ? 'Delivered' : 'Sent';
@@ -467,7 +469,7 @@ function MessageItem({
   );
 
   return (
-    <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', gap: 4, opacity: m.vanishing ? 0.4 : 1 }}>
+    <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', gap: 4, opacity: m.vanishing ? 0.75 : 1 }}>
       {body}
       {reactions.length ? (
         <View style={{ flexDirection: 'row', gap: 2, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, marginTop: -8 }}>
