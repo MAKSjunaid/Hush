@@ -7,6 +7,7 @@ import { API_URL } from './config';
 import { getSecret, setSecret } from './secure';
 import {
   KeyPair, Payload, newKeyPair, saveKeyPair, loadKeyPair, clearKeyPair, seal, open, sealBytes, decodeBase64,
+  wrapSecret, unwrapSecret,
 } from './crypto';
 
 // ---------- types ----------
@@ -367,7 +368,7 @@ export async function checkUsername(u: string) {
 export async function signup(username: string, displayName: string, password: string) {
   const keys = newKeyPair();
   const res = await api<{ token: string; user: Me; recoveryKey: string }>('/auth/signup', {
-    body: { username, displayName, password, publicKey: keys.publicKey },
+    body: { username, displayName, password, publicKey: keys.publicKey, keyBackup: wrapSecret(keys.secretKey, password) },
   });
   set({ pendingRecoveryKey: res.recoveryKey });
   await startSession(res.token, res.user, keys);
@@ -375,16 +376,28 @@ export async function signup(username: string, displayName: string, password: st
 }
 
 export async function login(username: string, password: string) {
-  const keys = (await loadKeyPair(username)) ?? newKeyPair();
-  const res = await api<{ token: string; user: Me }>('/auth/login', { body: { username, password, publicKey: keys.publicKey } });
+  // The account's keypair is restored from the server's password-encrypted backup, so this works
+  // even if this device never had the key (or the browser cleared its storage). Same key everywhere.
+  const local = await loadKeyPair(username);
+  const res = await api<{ token: string; user: Me; keyBackup: any }>('/auth/login', {
+    body: { username, password, ...(local ? { publicKey: local.publicKey, keyBackup: wrapSecret(local.secretKey, password) } : {}) },
+  });
+  setApiToken(res.token);
+  let keys = res.keyBackup ? unwrapSecret(res.keyBackup, password) : null; // backup is authoritative
+  if (!keys) keys = local ?? newKeyPair();
+  if (!res.keyBackup) {
+    // No backup on the server yet (legacy account or a fresh device): register this key once so it's
+    // stable from now on. Won't overwrite an existing backup.
+    await api('/me/key-backup', { body: { publicKey: keys.publicKey, keyBackup: wrapSecret(keys.secretKey, password) } }).catch(() => {});
+  }
   await startSession(res.token, res.user, keys);
   AsyncStorage.setItem('hush.me', JSON.stringify(res.user));
 }
 
 export async function recover(username: string, recoveryKey: string, newPassword: string) {
   const keys = (await loadKeyPair(username)) ?? newKeyPair();
-  const res = await api<{ token: string; user: Me }>('/auth/recover', {
-    body: { username, recoveryKey, newPassword, publicKey: keys.publicKey },
+  const res = await api<{ token: string; user: Me; keyBackup: any }>('/auth/recover', {
+    body: { username, recoveryKey, newPassword, publicKey: keys.publicKey, keyBackup: wrapSecret(keys.secretKey, newPassword) },
   });
   await startSession(res.token, res.user, keys);
 }
@@ -444,9 +457,11 @@ export async function changeUsername(username: string) {
   saveMe(user);
 }
 
-/** Change password. The server keeps your session (same device), so you stay logged in. */
+/** Change password. The key backup is re-wrapped under the new password (same keypair), so all your
+ *  message history stays readable. The server keeps your session, so you stay logged in. */
 export async function changePassword(currentPassword: string, newPassword: string) {
-  await api('/me/password', { body: { currentPassword, newPassword } });
+  const keyBackup = state.keys ? wrapSecret(state.keys.secretKey, newPassword) : undefined;
+  await api('/me/password', { body: { currentPassword, newPassword, keyBackup } });
 }
 
 /** The public URL for a user's photo, or null. ?v=<timestamp> makes each version cacheable. */

@@ -48,6 +48,49 @@ export async function clearKeyPair(account?: string | null) {
   if (account) await setSecret(LEGACY_SECRET_KEY, null); // also drop the legacy slot for this device
 }
 
+// ---------- server-side key backup ----------
+// The device keypair is wrapped with a key derived from the user's password and stored on the server.
+// Any device (or a re-login after the browser clears storage) unwraps it and gets the SAME keypair,
+// so messages never orphan. Pure tweetnacl so it behaves identically on web and phone.
+export type KeyBackup = { v: 1; enc: string; nonce: string; salt: string };
+
+const KDF_ROUNDS = 50000;
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+// Slow-ish KDF: iterated SHA-512 of (passphrase||salt), folded to a 32-byte secretbox key.
+function deriveWrapKey(passphrase: string, salt: Uint8Array): Uint8Array {
+  let h = nacl.hash(concatBytes(decodeUTF8(passphrase), salt));
+  for (let i = 1; i < KDF_ROUNDS; i++) h = nacl.hash(h);
+  return h.slice(0, nacl.secretbox.keyLength);
+}
+
+/** Encrypt the device secret key under the password, for safe storage on the server. */
+export function wrapSecret(secretKeyB64: string, passphrase: string): KeyBackup {
+  const salt = nacl.randomBytes(16);
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+  const wk = deriveWrapKey(passphrase, salt);
+  const enc = nacl.secretbox(decodeBase64(secretKeyB64), nonce, wk);
+  return { v: 1, enc: encodeBase64(enc), nonce: encodeBase64(nonce), salt: encodeBase64(salt) };
+}
+
+/** Recover the keypair from a server backup using the password. Null if the password is wrong. */
+export function unwrapSecret(b: KeyBackup | null | undefined, passphrase: string): KeyPair | null {
+  if (!b || b.v !== 1) return null;
+  try {
+    const wk = deriveWrapKey(passphrase, decodeBase64(b.salt));
+    const sk = nacl.secretbox.open(decodeBase64(b.enc), decodeBase64(b.nonce), wk);
+    if (!sk) return null;
+    const kp = nacl.box.keyPair.fromSecretKey(sk);
+    return { publicKey: encodeBase64(kp.publicKey), secretKey: encodeBase64(kp.secretKey) };
+  } catch {
+    return null;
+  }
+}
+
 /** Message plaintext is a small JSON payload. */
 export type Payload =
   | { t: 'text'; body: string; replyText?: string }
