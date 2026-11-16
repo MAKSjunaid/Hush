@@ -7,6 +7,27 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
+// Web Push: show the (content-free) notification, and focus/open the app when tapped.
+self.addEventListener('push', (e) => {
+  let data = { title: 'HushChat', body: 'New message' };
+  try { if (e.data) data = { ...data, ...e.data.json() }; } catch {}
+  e.waitUntil(self.registration.showNotification(data.title || 'HushChat', {
+    body: data.body || 'New message',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: 'hush-new',
+    renotify: true,
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) { if ('focus' in c) return c.focus(); }
+    if (self.clients.openWindow) return self.clients.openWindow('/');
+  })());
+});
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
