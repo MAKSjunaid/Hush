@@ -7,6 +7,7 @@ import {
 } from './auth.js';
 import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair } from './realtime.js';
 import { pushNewMessage } from './push.js';
+import { config } from './config.js';
 import express from 'express';
 import { presignUpload, presignDownload, mediaEnabled, deleteMedia, checkSigned, dbPut, dbGet, DB_MAX_BYTES } from './storage.js';
 
@@ -35,6 +36,7 @@ api.get('/config', wrap(async (_req, res) => {
     iosUrl: await getSetting('iosUrl', null),
     mediaEnabled: mediaEnabled(),
     editWindowMinutes: Number(getSettingSync('editWindowMinutes', 15)),
+    vapidPublicKey: config.vapid.publicKey || null, // public: the PWA needs it to subscribe to Web Push
   });
 }));
 
@@ -216,6 +218,25 @@ api.post('/me/push-token', requireUser, wrap(async (req, res) => {
   if (token !== req.user.push_token) {
     cacheUser(await one('UPDATE users SET push_token = $2 WHERE id = $1 RETURNING *', [req.user.id, token]));
   }
+  res.json({ ok: true });
+}));
+
+// ---------- Web Push (installed PWA, Android & iOS) ----------
+api.post('/me/web-push', requireUser, wrap(async (req, res) => {
+  const sub = req.body.subscription;
+  if (!sub || typeof sub.endpoint !== 'string') return bad(res, 'Bad subscription');
+  await q(
+    `INSERT INTO web_push_subs (user_id, endpoint, sub) VALUES ($1, $2, $3)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, sub = EXCLUDED.sub`,
+    [req.user.id, sub.endpoint.slice(0, 1000), JSON.stringify(sub)],
+  );
+  res.json({ ok: true });
+}));
+
+api.delete('/me/web-push', requireUser, wrap(async (req, res) => {
+  const endpoint = req.body?.endpoint;
+  if (endpoint) await q('DELETE FROM web_push_subs WHERE endpoint = $1 AND user_id = $2', [endpoint, req.user.id]);
+  else await q('DELETE FROM web_push_subs WHERE user_id = $1', [req.user.id]);
   res.json({ ok: true });
 }));
 

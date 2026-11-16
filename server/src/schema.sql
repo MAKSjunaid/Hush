@@ -136,6 +136,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_at timestamptz;
 -- Device keypair, encrypted with a key derived from the user's password. Lets any device (or a
 -- re-login after a browser clears local storage) restore the SAME keypair, so messages never orphan.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS key_backup jsonb;
+
+-- Web Push subscriptions for the installed PWA (Android & iOS home-screen). One per browser/device.
+CREATE TABLE IF NOT EXISTS web_push_subs (
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint    text NOT NULL,
+  sub         jsonb NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (endpoint)
+);
+CREATE INDEX IF NOT EXISTS web_push_subs_user_idx ON web_push_subs (user_id);
 CREATE TABLE IF NOT EXISTS avatars (
   user_id     uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data        bytea NOT NULL,

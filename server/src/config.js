@@ -26,7 +26,15 @@ export const config = {
     bucket: process.env.R2_BUCKET || 'hush-media',
   },
   expoAccessToken: process.env.EXPO_ACCESS_TOKEN || undefined,
+  // Web Push (PWA notifications on Android & iOS home-screen). Generate with `npx web-push generate-vapid-keys`.
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
+    subject: process.env.VAPID_SUBJECT || 'mailto:admin@hushchat.app',
+  },
 };
+
+export const webPushEnabled = () => Boolean(config.vapid.publicKey && config.vapid.privateKey);
 
 export const r2Enabled = () =>
   Boolean(config.r2.accountId && config.r2.accessKeyId && config.r2.secretAccessKey);
