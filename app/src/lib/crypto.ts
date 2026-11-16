@@ -9,7 +9,12 @@ nacl.setPRNG((x: Uint8Array, n: number) => {
   for (let i = 0; i < n; i++) x[i] = bytes[i];
 });
 
-const SECRET_KEY = 'hush.secretKey';
+// Legacy single-key slot (pre-per-account). Kept for migration so existing users don't lose identity.
+const LEGACY_SECRET_KEY = 'hush.secretKey';
+// Each account keeps its own stable keypair on the device, so logging out and back in — or switching
+// accounts — never rotates a key and orphans history. Keyed by username (lowercased).
+const slotFor = (account?: string | null) =>
+  account ? `hush.secretKey.${String(account).trim().toLowerCase()}` : LEGACY_SECRET_KEY;
 
 export type KeyPair = { publicKey: string; secretKey: string };
 
@@ -19,17 +24,28 @@ export function newKeyPair(): KeyPair {
   return { publicKey: encodeBase64(kp.publicKey), secretKey: encodeBase64(kp.secretKey) };
 }
 
-export async function saveKeyPair(kp: KeyPair) {
-  await setSecret(SECRET_KEY, JSON.stringify(kp));
+export async function saveKeyPair(kp: KeyPair, account?: string | null) {
+  await setSecret(slotFor(account), JSON.stringify(kp));
 }
 
-export async function loadKeyPair(): Promise<KeyPair | null> {
-  const raw = await getSecret(SECRET_KEY);
-  return raw ? (JSON.parse(raw) as KeyPair) : null;
+/**
+ * Load this account's keypair. Falls back to the legacy single-key slot (one-time migration) so an
+ * existing device keeps its identity and can still read its message history after this upgrade.
+ */
+export async function loadKeyPair(account?: string | null): Promise<KeyPair | null> {
+  let raw = await getSecret(slotFor(account));
+  if (!raw && account) raw = await getSecret(LEGACY_SECRET_KEY); // migrate the old device-wide key
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as KeyPair;
+  } catch {
+    return null;
+  }
 }
 
-export async function clearKeyPair() {
-  await setSecret(SECRET_KEY, null);
+export async function clearKeyPair(account?: string | null) {
+  await setSecret(slotFor(account), null);
+  if (account) await setSecret(LEGACY_SECRET_KEY, null); // also drop the legacy slot for this device
 }
 
 /** Message plaintext is a small JSON payload. */

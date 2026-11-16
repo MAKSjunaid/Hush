@@ -315,7 +315,7 @@ function emitSend(m: Msg) {
 // ---------- session ----------
 async function startSession(token: string, me: Me, keys: KeyPair) {
   await setSecret('hush.token', token);
-  await saveKeyPair(keys);
+  await saveKeyPair(keys, me.username);
   setApiToken(token);
   const timers = JSON.parse((await AsyncStorage.getItem('hush.timers')) || '{}');
   set({ token, me, keys, endedReason: null, messages: {}, timers });
@@ -325,22 +325,29 @@ async function startSession(token: string, me: Me, keys: KeyPair) {
 
 export async function init() {
   loadConfig();
-  const [token, keys] = await Promise.all([getSecret('hush.token'), loadKeyPair()]);
-  if (token && keys) {
+  const token = await getSecret('hush.token');
+  if (token) {
     setApiToken(token);
     try {
       const { user } = await api<{ user: Me }>('/me');
+      // Load THIS account's keypair (migrating the legacy device-wide key if present), then
+      // persist it per-account so the identity is stable across reloads and logouts.
+      const keys = await loadKeyPair(user.username);
+      if (keys) await saveKeyPair(keys, user.username);
       const timers = JSON.parse((await AsyncStorage.getItem('hush.timers')) || '{}');
       set({ token, keys, me: user, timers });
       connectSocket();
       registerPush();
     } catch (e: any) {
-      if (e.status === 401 || e.status === 403) await wipeLocal();
-      else set({ token, keys, me: null }); // offline: try later
-      if (e.status === 0) {
+      if (e.status === 401 || e.status === 403) {
+        await wipeLocal(); // forced logout keeps the keypair, so a re-login restores history
+      } else {
+        // Offline: recover identity from the cached profile so cached messages still decrypt.
         const cached = await AsyncStorage.getItem('hush.me');
-        if (cached) set({ me: JSON.parse(cached) });
-        connectSocket();
+        const me = cached ? (JSON.parse(cached) as Me) : null;
+        const keys = me ? await loadKeyPair(me.username) : await loadKeyPair();
+        set({ token, keys, me });
+        if (me) connectSocket();
       }
     }
   }
@@ -368,14 +375,14 @@ export async function signup(username: string, displayName: string, password: st
 }
 
 export async function login(username: string, password: string) {
-  const keys = (await loadKeyPair()) ?? newKeyPair();
+  const keys = (await loadKeyPair(username)) ?? newKeyPair();
   const res = await api<{ token: string; user: Me }>('/auth/login', { body: { username, password, publicKey: keys.publicKey } });
   await startSession(res.token, res.user, keys);
   AsyncStorage.setItem('hush.me', JSON.stringify(res.user));
 }
 
 export async function recover(username: string, recoveryKey: string, newPassword: string) {
-  const keys = (await loadKeyPair()) ?? newKeyPair();
+  const keys = (await loadKeyPair(username)) ?? newKeyPair();
   const res = await api<{ token: string; user: Me }>('/auth/recover', {
     body: { username, recoveryKey, newPassword, publicKey: keys.publicKey },
   });
@@ -400,7 +407,8 @@ async function wipeLocal(forgetKeys = false) {
 
 export async function logout() {
   await api('/me/push-token', { body: { token: null } }).catch(() => {});
-  await wipeLocal(true);
+  // Keep this account's keypair on the device so logging back in restores identity and history.
+  await wipeLocal(false);
 }
 
 async function endSession(reason: string | null) {
@@ -410,7 +418,8 @@ async function endSession(reason: string | null) {
 
 export async function deleteAccount(password: string) {
   await api('/me', { method: 'DELETE', body: { password } });
-  await wipeLocal(true);
+  await clearKeyPair(state.me?.username); // account is gone — drop its key for good
+  await wipeLocal(false);
 }
 
 export async function updateMe(patch: { displayName?: string; settings?: Settings }) {
