@@ -7,7 +7,8 @@ import {
 } from './auth.js';
 import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair } from './realtime.js';
 import { pushNewMessage } from './push.js';
-import { presignUpload, presignDownload, mediaEnabled, deleteMedia } from './storage.js';
+import express from 'express';
+import { presignUpload, presignDownload, mediaEnabled, deleteMedia, checkSigned, dbPut, dbGet, DB_MAX_BYTES } from './storage.js';
 
 export const api = Router();
 
@@ -367,6 +368,26 @@ api.post('/media/upload-url', requireUser, wrap(async (req, res) => {
   } catch (e) {
     bad(res, e.message);
   }
+}));
+
+// Database photo storage: upload/download with short-lived signed links (no login token needed in the URL).
+api.put('/media/blob/*key', express.raw({ type: () => true, limit: DB_MAX_BYTES }), wrap(async (req, res) => {
+  const key = [].concat(req.params.key).join('/');
+  if (!checkSigned('put', key, req.query.e, req.query.s)) return bad(res, 'Upload link expired', 403);
+  try {
+    await dbPut(key, req.body);
+  } catch (e) {
+    return bad(res, e.message, 413);
+  }
+  res.status(204).end();
+}));
+
+api.get('/media/blob/*key', wrap(async (req, res) => {
+  const key = [].concat(req.params.key).join('/');
+  if (!checkSigned('get', key, req.query.e, req.query.s)) return bad(res, 'Link expired', 403);
+  const data = await dbGet(key);
+  if (!data) return bad(res, 'This photo is gone', 404);
+  res.set({ 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, no-store' }).send(data);
 }));
 
 api.get('/media/download-url', requireUser, wrap(async (req, res) => {

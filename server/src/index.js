@@ -10,6 +10,7 @@ import { migrate, getSetting, getSettingSync, shutdown } from './db.js';
 import { api } from './routes.js';
 import { admin } from './admin.js';
 import { attachRealtime } from './realtime.js';
+import { startMediaJanitor } from './storage.js';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -75,6 +76,7 @@ app.use((err, _req, res, _next) => {
 
 const server = http.createServer(app);
 attachRealtime(server);
+startMediaJanitor();
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, async () => {

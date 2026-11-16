@@ -114,3 +114,12 @@ CREATE INDEX IF NOT EXISTS reports_status_idx ON reports (status, created_at DES
 CREATE INDEX IF NOT EXISTS reports_reported_idx ON reports (reported_id);
 CREATE INDEX IF NOT EXISTS blocks_blocked_idx ON blocks (blocked_id);
 CREATE INDEX IF NOT EXISTS user_activity_day_idx ON user_activity (day);
+
+-- Photos when Cloudflare R2 isn't set up: encrypted bytes, deleted once seen / expired.
+CREATE TABLE IF NOT EXISTS media (
+  key         text PRIMARY KEY,
+  data        bytea NOT NULL,
+  size        integer NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE media ALTER COLUMN data SET STORAGE EXTERNAL; -- already encrypted: skip pointless compression
