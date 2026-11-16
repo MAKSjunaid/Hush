@@ -2,7 +2,7 @@ import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useTheme } from '@/lib/theme';
 
-/** Shown for a moment while Hush decides where to go (handled in _layout). */
+/** Shown for a moment while HushChat decides where to go (handled in _layout). */
 export default function Index() {
   const { c } = useTheme();
   return (

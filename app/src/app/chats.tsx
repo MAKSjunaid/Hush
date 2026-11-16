@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Screen, Sheet, T, tap, ThemeToggle } from '@/components/ui';
 import { SwipeRow } from '@/components/SwipeRow';
 import { fonts, useTheme } from '@/lib/theme';
-import { deleteChat, dismissAnnouncement, Msg, peerOf, useStore, Conn } from '@/lib/store';
+import { avatarUrl, deleteChat, dismissAnnouncement, Msg, peerOf, useStore, Conn } from '@/lib/store';
 import { shortWhen } from '@/lib/format';
 
 type Row = { conn: Conn; last?: Msg; unread: number; typing: boolean; at: string };
@@ -142,7 +142,7 @@ export default function Chats() {
               onDelete={() => setToDelete(u)}
             >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 12, paddingHorizontal: 24 }}>
-              <Avatar name={u.username} online={u.online} />
+              <Avatar name={u.username} online={u.online} uri={avatarUrl(u)} />
               <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
                   <T variant="bodyStrong" numberOfLines={1} style={{ flexShrink: 1 }}>{u.displayName !== u.username ? u.displayName : u.username}</T>

@@ -4,7 +4,11 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, Field, Header, Row, Screen, Sheet, T, Toggle, tap } from '@/components/ui';
 import { fonts, ThemeMode, useTheme } from '@/lib/theme';
-import { deleteAccount, listBlocked, logout, unblockUser, updateMe, useStore, User } from '@/lib/store';
+import {
+  avatarUrl, changePassword, changeUsername, deleteAccount, listBlocked, logout, Me, removeAvatar, setAvatar,
+  unblockUser, updateMe, useStore, User,
+} from '@/lib/store';
+import * as ImagePicker from 'expo-image-picker';
 import {
   biometricAvailable, getBiometricPref, getLockDelay, isLockEnabled, setBiometricPref, setLockDelay, setPin,
 } from '@/lib/lock';
@@ -21,7 +25,7 @@ export default function Settings() {
   const { c, mode, setMode } = useTheme();
   const router = useRouter();
   const me = useStore((s) => s.me);
-  const [sheet, setSheet] = useState<null | 'pin' | 'delay' | 'blocked' | 'delete' | 'name'>(null);
+  const [sheet, setSheet] = useState<null | 'pin' | 'delay' | 'blocked' | 'delete' | 'profile' | 'password'>(null);
   const [lockOn, setLockOn] = useState(false);
   const [bioOn, setBioOn] = useState(false);
   const [bioAvail, setBioAvail] = useState(false);
@@ -44,8 +48,13 @@ export default function Settings() {
     <Screen>
       <Header title="Privacy & settings" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={{ gap: 8, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-        <Pressable onPress={() => setSheet('name')} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 18, backgroundColor: c.surface, borderWidth: c.dark ? 0 : 1, borderColor: c.border }}>
-          <Avatar name={me.username} size={56} />
+        <Pressable onPress={() => setSheet('profile')} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 18, backgroundColor: c.surface, borderWidth: c.dark ? 0 : 1, borderColor: c.border }}>
+          <View>
+            <Avatar name={me.username} size={56} uri={avatarUrl(me)} />
+            <View style={{ position: 'absolute', right: -2, bottom: -2, width: 22, height: 22, borderRadius: 11, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: c.surface }}>
+              <Ionicons name="camera" size={12} color={c.accentText} />
+            </View>
+          </View>
           <View style={{ flex: 1 }}>
             <T variant="bodyStrong">{me.displayName}</T>
             <T variant="small">@{me.username}</T>
@@ -83,7 +92,7 @@ export default function Settings() {
         <Section title="Security">
           <Toggle
             label="App lock"
-            sub={isWeb ? '4-digit PIN to open Hush' : 'PIN, Face ID or fingerprint to open Hush'}
+            sub={isWeb ? '4-digit PIN to open HushChat' : 'PIN, Face ID or fingerprint to open HushChat'}
             value={lockOn}
             onChange={async (v) => {
               if (v) setSheet('pin');
@@ -97,6 +106,7 @@ export default function Settings() {
             <Toggle label="Unlock with Face ID / fingerprint" value={bioOn} onChange={async (v) => { await setBiometricPref(v); setBioOn(v); }} />
           ) : null}
           {lockOn ? <Row label="Lock again" value={LOCK_DELAYS.find((d) => d.s === delay)?.label} onPress={() => setSheet('delay')} /> : null}
+          <Row icon="key-outline" label="Change password" onPress={() => setSheet('password')} />
           <Row label="Blocked people" onPress={() => setSheet('blocked')} />
         </Section>
 
@@ -104,12 +114,12 @@ export default function Settings() {
           <Toggle label="Message notifications" sub={'Only ever says "New message" — never the text'} value={s.notifications !== false} onChange={(v) => setPref('notifications', v)} />
         </Section>
 
-        <Section title="Hush">
+        <Section title="HushChat">
           <Row
             icon="share-outline"
             label="Invite friends"
             sub="One link for Android, iPhone and browser"
-            onPress={() => Share.share({ message: `Chat with me on Hush — messages vanish once seen. My username: @${me.username}\n${API_URL}/get` })}
+            onPress={() => Share.share({ message: `Chat with me on HushChat — messages vanish once seen. My username: @${me.username}\n${API_URL}/get` })}
           />
           <Row icon="information-circle-outline" label="Version" value={APP_VERSION} />
           <Row icon="log-out-outline" label="Log out" onPress={async () => { await logout(); router.replace('/welcome'); }} />
@@ -127,7 +137,8 @@ export default function Settings() {
         ))}
       </Sheet>
       <BlockedSheet visible={sheet === 'blocked'} onClose={() => setSheet(null)} />
-      <NameSheet visible={sheet === 'name'} onClose={() => setSheet(null)} current={me.displayName} />
+      <ProfileSheet visible={sheet === 'profile'} onClose={() => setSheet(null)} me={me} />
+      <PasswordSheet visible={sheet === 'password'} onClose={() => setSheet(null)} />
       <DeleteSheet visible={sheet === 'delete'} onClose={() => setSheet(null)} onDeleted={() => router.replace('/welcome')} />
     </Screen>
   );
@@ -189,7 +200,7 @@ function BlockedSheet({ visible, onClose }: { visible: boolean; onClose: () => v
       {users === null ? <T variant="small">Loading…</T> : users.length === 0 ? <T variant="small">You haven't blocked anyone.</T> : null}
       {users?.map((u) => (
         <View key={u.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 }}>
-          <Avatar name={u.username} size={40} />
+          <Avatar name={u.username} size={40} uri={avatarUrl(u)} />
           <T style={{ flex: 1 }}>@{u.username}</T>
           <Button small variant="secondary" title="Unblock" onPress={async () => { await unblockUser(u.id); setUsers((x) => x?.filter((y) => y.id !== u.id) ?? null); }} />
         </View>
@@ -198,16 +209,136 @@ function BlockedSheet({ visible, onClose }: { visible: boolean; onClose: () => v
   );
 }
 
-function NameSheet({ visible, onClose, current }: { visible: boolean; onClose: () => void; current: string }) {
-  const [name, setName] = useState(current);
+function ProfileSheet({ visible, onClose, me }: { visible: boolean; onClose: () => void; me: Me }) {
+  const { c } = useTheme();
+  const [name, setName] = useState(me.displayName);
+  const [username, setUsername] = useState(me.username);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   useEffect(() => {
-    if (visible) setName(current);
-  }, [visible, current]);
+    if (visible) {
+      setName(me.displayName);
+      setUsername(me.username);
+      setError(null);
+    }
+  }, [visible, me.displayName, me.username]);
+
+  const cleanUser = username.trim().replace(/^@/, '').toLowerCase();
+  const nameChanged = name.trim() && name.trim() !== me.displayName;
+  const userChanged = cleanUser && cleanUser !== me.username.toLowerCase();
+  const canSave = !!(nameChanged || userChanged) && !busy;
+
+  const pickPhoto = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 1,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      setPhotoBusy(true);
+      setError(null);
+      await setAvatar(res.assets[0].uri);
+    } catch (e: any) {
+      setError(e.message || 'Could not update photo');
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (userChanged) await changeUsername(cleanUser); // contacts & chats stay — connections key on your id
+      if (nameChanged) await updateMe({ displayName: name.trim() });
+      onClose();
+    } catch (e: any) {
+      setError(e.message || 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Sheet visible={visible} onClose={onClose} title="Display name">
+    <Sheet visible={visible} onClose={onClose} title="Edit profile">
+      <View style={{ gap: 16 }}>
+        <View style={{ alignItems: 'center', gap: 10 }}>
+          <Pressable onPress={pickPhoto} disabled={photoBusy} style={{ opacity: photoBusy ? 0.6 : 1 }}>
+            <Avatar name={me.username} size={88} uri={avatarUrl(me)} />
+            <View style={{ position: 'absolute', right: -2, bottom: -2, width: 30, height: 30, borderRadius: 15, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: c.surface }}>
+              <Ionicons name="camera" size={16} color={c.accentText} />
+            </View>
+          </Pressable>
+          <View style={{ flexDirection: 'row', gap: 16 }}>
+            <Pressable onPress={pickPhoto} disabled={photoBusy}><T variant="small" color={c.accent}>{me.avatarAt ? 'Change photo' : 'Add photo'}</T></Pressable>
+            {me.avatarAt ? (
+              <Pressable onPress={async () => { setPhotoBusy(true); try { await removeAvatar(); } catch { } finally { setPhotoBusy(false); } }} disabled={photoBusy}>
+                <T variant="small" color={c.danger}>Remove</T>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+
+        <View style={{ gap: 6 }}>
+          <T variant="label">Name</T>
+          <Field value={name} onChangeText={setName} maxLength={40} placeholder="Your name" />
+        </View>
+
+        <View style={{ gap: 6 }}>
+          <T variant="label">Username</T>
+          <Field value={username} onChangeText={(t) => setUsername(t.replace(/\s/g, ''))} maxLength={24} autoCapitalize="none" placeholder="username" />
+          <T variant="small" color={c.faint}>Changing it keeps all your chats and contacts. You can change it once every 30 days.</T>
+        </View>
+
+        {error ? <T variant="small" color={c.danger}>{error}</T> : null}
+        <Button title="Save" loading={busy} disabled={!canSave} onPress={save} />
+      </View>
+    </Sheet>
+  );
+}
+
+function PasswordSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { c } = useTheme();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (visible) { setCurrent(''); setNext(''); setConfirm(''); setError(null); setDone(false); }
+  }, [visible]);
+
+  const valid = current.length >= 1 && next.length >= 8 && next === confirm;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await changePassword(current, next);
+      setDone(true);
+      setTimeout(onClose, 1100);
+    } catch (e: any) {
+      setError(e.message || 'Could not change password');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Change password">
       <View style={{ gap: 14 }}>
-        <Field value={name} onChangeText={setName} maxLength={40} placeholder="Your name" />
-        <Button title="Save" disabled={!name.trim()} onPress={async () => { await updateMe({ displayName: name.trim() }); onClose(); }} />
+        {done ? (
+          <T color={c.success}>Password changed. You're still logged in on this device.</T>
+        ) : (
+          <>
+            <Field label="Current password" value={current} onChangeText={setCurrent} secureTextEntry autoCapitalize="none" />
+            <Field label="New password" value={next} onChangeText={setNext} secureTextEntry autoCapitalize="none" />
+            <Field label="Repeat new password" value={confirm} onChangeText={setConfirm} secureTextEntry autoCapitalize="none"
+              error={confirm.length > 0 && next !== confirm ? "Passwords don't match" : error} />
+            <T variant="small" color={c.faint}>At least 8 characters.</T>
+            <Button title="Update password" loading={busy} disabled={!valid} onPress={save} />
+          </>
+        )}
       </View>
     </Sheet>
   );

@@ -58,7 +58,7 @@ export default function Login() {
             right={<IconButton icon={show ? 'eye-off-outline' : 'eye-outline'} label={show ? 'Hide password' : 'Show password'} color={c.muted} size={20} onPress={() => setShow(!show)} />}
           />
           <Button title="Forgot password? Use recovery key" variant="ghost" small onPress={() => router.push('/recover')} style={{ alignSelf: 'flex-end', paddingHorizontal: 0 }} />
-          <Notice icon="phone-portrait-outline" text="Hush works on one device at a time. Logging in here signs you out everywhere else, and chats on the old device can't be opened here." />
+          <Notice icon="phone-portrait-outline" text="HushChat works on one device at a time. Logging in here signs you out everywhere else, and chats on the old device can't be opened here." />
           {error ? <T variant="small" color={c.danger}>{error}</T> : null}
         </ScrollView>
         <View style={{ gap: 12, paddingBottom: 12 }}>

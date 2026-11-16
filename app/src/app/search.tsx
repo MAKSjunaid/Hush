@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Screen, T } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
-import { answerRequest, requestChat, searchUsers, useStore, User } from '@/lib/store';
+import { answerRequest, avatarUrl, requestChat, searchUsers, useStore, User } from '@/lib/store';
 import { isWeb } from '@/lib/config';
 
 type Result = User & { connection: { status: string; outgoing: boolean } | null };
@@ -111,7 +111,7 @@ export default function Search() {
         ListEmptyComponent={term.length >= 3 && !loading ? <T variant="small" style={{ paddingVertical: 12 }}>No one found with that username.</T> : undefined}
         renderItem={({ item }) => (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10 }}>
-            <Avatar name={item.username} size={48} />
+            <Avatar name={item.username} size={48} uri={avatarUrl(item)} />
             <View style={{ flex: 1, minWidth: 0 }}>
               {highlight(item.username)}
               {item.displayName !== item.username ? <T variant="small" numberOfLines={1}>{item.displayName}</T> : null}
@@ -127,7 +127,7 @@ export default function Search() {
                 <T variant="caption" style={{ marginBottom: 6 }}>Requests for you · {incoming.length}</T>
                 {incoming.map((r) => (
                   <View key={r.connectionId} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10 }}>
-                    <Avatar name={r.user.username} size={48} />
+                    <Avatar name={r.user.username} size={48} uri={avatarUrl(r.user)} />
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <T variant="bodyStrong">{r.user.username}</T>
                       <T variant="small">wants to chat</T>
@@ -147,7 +147,7 @@ export default function Search() {
                 <T variant="caption" style={{ marginBottom: 6 }}>Waiting for them · {outgoing.length}</T>
                 {outgoing.map((r) => (
                   <View key={r.connectionId} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10 }}>
-                    <Avatar name={r.user.username} size={40} />
+                    <Avatar name={r.user.username} size={40} uri={avatarUrl(r.user)} />
                     <T style={{ flex: 1 }}>{r.user.username}</T>
                     <T variant="small">Requested</T>
                   </View>

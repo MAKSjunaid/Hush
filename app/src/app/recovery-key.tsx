@@ -25,7 +25,7 @@ export default function RecoveryKey() {
       <ScrollView contentContainerStyle={{ gap: 22, paddingTop: 24, paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
         <View style={{ gap: 8 }}>
           <T variant="title" style={{ fontSize: 30 }}>Save your recovery key</T>
-          <T color={c.muted}>Hush never knows your email or number. If you forget your password, these 12 words are the only way back in.</T>
+          <T color={c.muted}>HushChat never knows your email or number. If you forget your password, these 12 words are the only way back in.</T>
         </View>
 
         <View style={{ padding: 14, borderRadius: 18, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>

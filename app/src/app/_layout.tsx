@@ -47,9 +47,9 @@ function Gate() {
     <LockGate active={Boolean(token)}>
       <StatusBar style={c.dark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg }, animation: 'slide_from_right' }} />
-      {config?.maintenance ? <Banner text="Hush is under maintenance. Messages will send when we're back." /> : null}
+      {config?.maintenance ? <Banner text="HushChat is under maintenance. Messages will send when we're back." /> : null}
       {mustUpdate ? (
-        <Banner text="A new version of Hush is required. Tap to update." onPress={() => Linking.openURL(`${API_URL}/get`)} />
+        <Banner text="A new version of HushChat is required. Tap to update." onPress={() => Linking.openURL(`${API_URL}/get`)} />
       ) : null}
     </LockGate>
   );

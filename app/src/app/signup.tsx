@@ -66,7 +66,7 @@ export default function Signup() {
         <Header onBack={() => router.back()} />
         <ScrollView contentContainerStyle={{ gap: 22, paddingBottom: 24 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={{ gap: 8 }}>
-            <T variant="title">Create your Hush</T>
+            <T variant="title">Create your account</T>
             <T color={c.muted}>No email. No phone number. Just a name only you choose.</T>
           </View>
 

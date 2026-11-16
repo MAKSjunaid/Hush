@@ -11,7 +11,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   { icon: 'eye-off-outline', title: 'Gone once seen', body: 'Messages delete themselves for both people.' },
   { icon: 'camera-outline', title: 'Screenshot alerts', body: 'Screenshots come out black, and the other person is told.' },
   { icon: 'person-outline', title: 'No phone, no email', body: 'Just a username you choose. Nothing else about you.' },
-  { icon: 'lock-closed-outline', title: 'End-to-end encrypted', body: 'Not even the Hush server can read your chats.' },
+  { icon: 'lock-closed-outline', title: 'End-to-end encrypted', body: 'Not even the HushChat server can read your chats.' },
 ];
 
 export default function Welcome() {
