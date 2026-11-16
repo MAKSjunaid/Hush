@@ -41,7 +41,7 @@ export default function Chat() {
   const [menuFor, setMenuFor] = useState<Msg | null>(null);
   const [sheet, setSheet] = useState<null | 'timer' | 'more' | 'report' | 'safety' | 'delete'>(null);
   const [reportMsg, setReportMsg] = useState<Msg | null>(null);
-  const [viewer, setViewer] = useState<{ msg: Msg; uri: string | null; loading: boolean; error?: string } | null>(null);
+  const [viewer, setViewer] = useState<{ msg: Msg; uri: string | null; loading: boolean; error?: string; progress?: number } | null>(null);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState<Msg | null>(null);
@@ -173,9 +173,10 @@ export default function Chat() {
 
   const openPhoto = async (m: Msg) => {
     if (m.mine) return;
-    setViewer({ msg: m, uri: null, loading: true });
+    setViewer({ msg: m, uri: null, loading: true, progress: 0 });
     try {
-      const bytes = await fetchPhoto(m);
+      const bytes = await fetchPhoto(m, (p) =>
+        setViewer((v) => (v && v.msg.id === m.id && v.loading ? { ...v, progress: p } : v)));
       if (!bytes) throw new Error('This photo is gone');
       // On web, hand the <img> a blob: URL we can revoke on close, so the decrypted image
       // can't be re-opened from that URL afterwards (a data: URL would linger). On native a
@@ -473,8 +474,16 @@ export default function Chat() {
       {/* view-once photo */}
       <Modal visible={!!viewer} animationType="fade" onRequestClose={closeViewer}>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
+          {/* Top loading bar: fills as the photo downloads, so a big image isn't just a black screen. */}
+          {viewer?.loading ? (
+            <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              <View style={{ height: 3, width: `${Math.round((viewer.progress ?? 0) * 100)}%`, backgroundColor: c.accent }} />
+            </View>
+          ) : <View style={{ height: 3 }} />}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 8 }}>
-            <T variant="small" color="#C9C8CF" style={{ marginLeft: 12 }}>View once · vanishes when you close it</T>
+            <T variant="small" color="#C9C8CF" style={{ marginLeft: 12 }}>
+              {viewer?.loading ? `Loading… ${Math.round((viewer.progress ?? 0) * 100)}%` : 'View once · vanishes when you close it'}
+            </T>
             <IconButton icon="close" label="Close photo" color="#FFFFFF" onPress={closeViewer} />
           </View>
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
