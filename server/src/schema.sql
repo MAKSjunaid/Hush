@@ -123,3 +123,6 @@ CREATE TABLE IF NOT EXISTS media (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE media ALTER COLUMN data SET STORAGE EXTERNAL; -- already encrypted: skip pointless compression
+
+-- Message editing (sender can fix a typo for a few minutes; window set in admin, default 15 min)
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at timestamptz;

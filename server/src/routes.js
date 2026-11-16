@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { q, one, bumpStat, getSetting, getUser, cacheUser, forgetUser } from './db.js';
+import { q, one, bumpStat, getSetting, getSettingSync, getUser, cacheUser, forgetUser } from './db.js';
 import {
   normalizeUsername, validateUsername, validatePassword, hash, compare, newRecoveryKey,
   normalizeRecoveryKey, signToken, requireUser, publicUser, selfUser,
@@ -34,6 +34,7 @@ api.get('/config', wrap(async (_req, res) => {
     apkUrl: await getSetting('apkUrl', null),
     iosUrl: await getSetting('iosUrl', null),
     mediaEnabled: mediaEnabled(),
+    editWindowMinutes: Number(getSettingSync('editWindowMinutes', 15)),
   });
 }));
 
@@ -293,6 +294,20 @@ api.delete('/connections/:userId', requireUser, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Delete chat: wipes every message between the two of you, on both phones. You stay connected.
+api.delete('/messages/with/:userId', requireUser, wrap(async (req, res) => {
+  const other = String(req.params.userId);
+  if (!/^[0-9a-f-]{36}$/i.test(other)) return bad(res, 'Unknown chat');
+  const { rows } = await q(
+    `DELETE FROM messages WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
+     RETURNING media_key`,
+    [req.user.id, other],
+  );
+  rows.forEach((r) => r.media_key && deleteMedia(r.media_key));
+  emitTo(other, 'chat_cleared', { userId: req.user.id });
+  res.json({ ok: true });
+}));
+
 // ---------- block / report ----------
 api.get('/blocks', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
@@ -344,7 +359,7 @@ api.get('/messages/sync', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
     // Only the columns the phone needs, and only the copy this user can decrypt.
     `SELECT id, client_id, sender_id, recipient_id, kind, sender_public_key, media_key, reply_to, view_once,
-            timer_seconds, created_at, delivered_at, seen_at, expires_at,
+            timer_seconds, created_at, delivered_at, seen_at, expires_at, edited_at,
             CASE WHEN sender_id = $1 THEN self_ciphertext ELSE ciphertext END AS ciphertext,
             CASE WHEN sender_id = $1 THEN self_nonce ELSE nonce END AS nonce
        FROM messages WHERE (sender_id = $1 OR recipient_id = $1) AND expires_at > now()

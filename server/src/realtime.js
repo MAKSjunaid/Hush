@@ -46,6 +46,7 @@ export function serializeMessage(m, viewerId) {
     deliveredAt: m.delivered_at,
     seenAt: m.seen_at,
     expiresAt: m.expires_at,
+    editedAt: m.edited_at ?? null,
   };
 }
 
@@ -155,6 +156,9 @@ function rateLimiter(limit, windowMs) {
   };
 }
 const sendLimit = rateLimiter(30, 10_000);
+const editLimit = rateLimiter(30, 60_000);
+// Read-and-deleted text messages, kept in memory only for the longest possible edit window (capped size).
+const recentlySeen = registerCache(new TTLCache({ ttlMs: 24 * 3600_000, max: 50_000 }));
 const eventLimit = rateLimiter(60, 10_000);
 
 // Who might have undelivered messages: anyone a message was queued for, plus everyone once after a restart.
@@ -275,11 +279,41 @@ export function attachRealtime(httpServer) {
       }
     }));
 
+    // Edit your own text message within the edit window (admin setting, default 15 min). One UPDATE, no reads:
+    // the WHERE clause checks ownership, kind and time, and RETURNING gives everything needed to notify.
+    socket.on('edit', guard(async (p, reply) => {
+      if (!editLimit(userId)) return reply({ error: 'You are editing too fast' });
+      const mins = Math.max(0, Math.min(1440, Number(getSettingSync('editWindowMinutes', 15)) || 0));
+      if (!mins) return reply({ error: 'Editing is turned off' });
+      if (!p.ciphertext || !p.nonce || !p.selfCiphertext || !p.selfNonce) return reply({ error: 'Not encrypted' });
+      if (String(p.ciphertext).length > 20_000) return reply({ error: 'Message too long' });
+      const id = String(p.id || '');
+      // Already read (and deleted from the server) but still on their screen: relay the edit, zero database work.
+      const seen = recentlySeen.get(id);
+      if (seen) {
+        if (seen.s !== userId || Date.now() - seen.c > mins * 60_000) return reply({ error: 'This message can no longer be edited' });
+        const editedAt = new Date().toISOString();
+        emitTo(seen.r, 'message_edited', { id, ciphertext: p.ciphertext, nonce: p.nonce, editedAt });
+        return reply({ editedAt });
+      }
+      const row = await one(
+        `UPDATE messages SET ciphertext = $3, nonce = $4, self_ciphertext = $5, self_nonce = $6, edited_at = now()
+          WHERE id = $1 AND sender_id = $2 AND kind = 'text' AND created_at > now() - make_interval(mins => $7)
+         RETURNING id, client_id, sender_id, recipient_id, kind, ciphertext, nonce, self_ciphertext, self_nonce,
+                   sender_public_key, media_key, reply_to, view_once, timer_seconds, created_at, delivered_at, seen_at,
+                   expires_at, edited_at`,
+        [id, userId, p.ciphertext, p.nonce, p.selfCiphertext, p.selfNonce, mins],
+      ).catch(() => null);
+      if (!row) return reply({ error: 'This message can no longer be edited' });
+      reply({ message: serializeMessage(row, userId) });
+      emitTo(row.recipient_id, 'message', serializeMessage(row, row.recipient_id));
+    }));
+
     socket.on('seen', guard(async (p, reply) => {
       const ids = Array.isArray(p.ids) ? p.ids.slice(0, 200) : [];
       if (!ids.length) return reply({ ok: true });
       const { rows } = await q(
-        `SELECT id, sender_id, recipient_id, timer_seconds, media_key, view_once
+        `SELECT id, sender_id, recipient_id, timer_seconds, media_key, view_once, kind, created_at
            FROM messages WHERE id = ANY($1::uuid[]) AND recipient_id = $2 AND seen_at IS NULL
             AND kind IN ('text','photo')`,
         [ids, userId],
@@ -292,6 +326,8 @@ export function attachRealtime(httpServer) {
         // Gone from the server the moment it's seen. The reader's screen keeps it until they leave the chat.
         await q('DELETE FROM messages WHERE id = ANY($1::uuid[])', [vanishNow.map((r) => r.id)]);
         for (const r of vanishNow) {
+          // Still on the reader's screen until they leave: remember just enough (in memory) to allow a quick edit.
+          if (r.kind === 'text') recentlySeen.set(r.id, { s: r.sender_id, r: r.recipient_id, c: new Date(r.created_at).getTime() });
           emitTo(r.sender_id, 'seen', { id: r.id, at: now, vanishing: true });
           if (r.media_key) deleteMedia(r.media_key);
         }

@@ -130,6 +130,7 @@ admin.get('/settings', wrap(async (_req, res) => {
     latestAppVersion: await getSetting('latestAppVersion', '1.0.0'),
     apkUrl: await getSetting('apkUrl', null),
     iosUrl: await getSetting('iosUrl', null),
+    editWindowMinutes: await getSetting('editWindowMinutes', 15),
   });
 }));
 
@@ -144,6 +145,10 @@ admin.post('/settings', wrap(async (req, res) => {
       const { rows } = await q('SELECT id FROM users');
       rows.forEach((r) => emitTo(r.id, 'announcement', value));
     }
+  }
+  if ('editWindowMinutes' in b) {
+    const n = Math.round(Number(b.editWindowMinutes));
+    await setSetting('editWindowMinutes', Number.isFinite(n) ? Math.max(0, Math.min(1440, n)) : 15);
   }
   for (const k of ['minAppVersion', 'latestAppVersion', 'apkUrl', 'iosUrl']) {
     if (k in b) await setSetting(k, b[k] ? String(b[k]).slice(0, 300) : null);
