@@ -618,12 +618,35 @@ export async function sendPhoto(peerId: string, bytes: Uint8Array, w?: number, h
   queue(peerId, 'photo', { t: 'photo', key: sealedFile.key, nonce: sealedFile.nonce, w, h }, { mediaKey: key });
 }
 
-export async function fetchPhoto(m: Msg): Promise<Uint8Array | null> {
+export async function fetchPhoto(m: Msg, onProgress?: (fraction: number) => void): Promise<Uint8Array | null> {
   if (m.payload?.t !== 'photo' || !m.mediaKey) return null;
   const { url } = await api<{ url: string }>(`/media/download-url?key=${encodeURIComponent(m.mediaKey)}`);
   const res = await fetch(absUrl(url));
   if (!res.ok) throw new Error(res.status === 404 ? 'This photo is gone' : 'Could not load photo');
-  const buf = new Uint8Array(await res.arrayBuffer());
+
+  // Stream the download so a big photo can show a real progress %, instead of a long black screen.
+  const total = Number(res.headers.get('Content-Length')) || 0;
+  let buf: Uint8Array;
+  const reader = res.body?.getReader?.();
+  if (reader) {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        received += value.length;
+        if (onProgress) onProgress(total ? Math.min(0.99, received / total) : 0);
+      }
+    }
+    buf = new Uint8Array(received);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+  } else {
+    buf = new Uint8Array(await res.arrayBuffer());
+  }
+  if (onProgress) onProgress(1);
   const { openBytes } = await import('./crypto');
   return openBytes(buf, m.payload.key, m.payload.nonce);
 }
