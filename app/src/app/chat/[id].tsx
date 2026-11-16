@@ -267,7 +267,7 @@ export default function Chat() {
                   send();
                 }
               }}
-              style={[{ color: c.text, fontFamily: fonts.regular, fontSize: 15, paddingVertical: 11, maxHeight: 130 }, isWeb ? ({ outlineStyle: 'none' } as any) : null]}
+              style={[{ color: c.text, fontFamily: fonts.regular, fontSize: 16, paddingVertical: 11, maxHeight: 130 }, isWeb ? ({ outlineStyle: 'none' } as any) : null]}
             />
           </View>
           <Pressable
