@@ -39,6 +39,7 @@ export type Msg = {
   seenAt?: string | null;
   expiresAt?: string | null;
   status: 'sending' | 'sent' | 'delivered' | 'seen' | 'failed';
+  editedAt?: string | null;
   vanishing?: boolean; // sender side: seen, fading out
   readLocally?: boolean; // reader side: already gone from server, shown until you leave the chat
   reactions: Record<string, string>;
@@ -53,6 +54,7 @@ export type AppConfig = {
   apkUrl: string | null;
   iosUrl: string | null;
   mediaEnabled: boolean;
+  editWindowMinutes?: number;
 };
 
 type State = {
@@ -134,7 +136,9 @@ function toMsg(raw: any, prev?: Msg): Msg {
     to: raw.to,
     kind: raw.kind,
     mine: raw.mine,
-    payload: prev?.payload ?? decrypt(raw),
+    // Re-decrypt only when the message was edited since we last saw it.
+    payload: prev?.payload && (prev.editedAt ?? null) === (raw.editedAt ?? null) ? prev.payload : decrypt(raw),
+    editedAt: raw.editedAt ?? null,
     mediaKey: raw.mediaKey,
     replyTo: raw.replyTo,
     viewOnce: raw.viewOnce,
@@ -216,6 +220,16 @@ function connectSocket() {
     keep.forEach((id) => patchMsg(id, { vanishing: true, readLocally: true, expiresAt: null }));
     removeIds(ids.filter((id) => !keep.includes(id)));
   });
+  // A message I already read (still on my screen) was corrected by the sender.
+  socket.on('message_edited', ({ id, ciphertext, nonce, editedAt }: { id: string; ciphertext: string; nonce: string; editedAt: string }) => {
+    const m = state.messages[id];
+    const pk = m && contactById(m.from)?.publicKey;
+    if (!m || m.mine || !pk) return;
+    const payload = decrypt({ kind: 'text', mine: false, ciphertext, nonce, senderPublicKey: pk });
+    if (payload) patchMsg(id, { payload, editedAt });
+  });
+  // The other person deleted the chat: it's gone here too, right away.
+  socket.on('chat_cleared', ({ userId }: { userId: string }) => clearChatLocally(userId));
   socket.on('reaction', ({ id, userId, emoji }) => {
     const m = state.messages[id];
     if (!m) return;
@@ -430,6 +444,16 @@ export async function answerRequest(connectionId: string, accept: boolean) {
   await refreshConnections();
 }
 
+function clearChatLocally(peerId: string) {
+  removeIds(Object.values(state.messages).filter((m) => peerOf(m) === peerId).map((m) => m.id));
+}
+
+/** Delete chat: every message between you two disappears from both phones and the server. */
+export async function deleteChat(peerId: string) {
+  await api(`/messages/with/${peerId}`, { method: 'DELETE' });
+  clearChatLocally(peerId);
+}
+
 export async function removeContact(userId: string) {
   await api(`/connections/${userId}`, { method: 'DELETE' });
   await refreshConnections();
@@ -524,6 +548,41 @@ export async function fetchPhoto(m: Msg): Promise<Uint8Array | null> {
   const buf = new Uint8Array(await res.arrayBuffer());
   const { openBytes } = await import('./crypto');
   return openBytes(buf, m.payload.key, m.payload.nonce);
+}
+
+/** Can I still edit this message? (my own text, on the server, inside the admin-set window) */
+export function canEdit(m: Msg): boolean {
+  const mins = state.config?.editWindowMinutes ?? 15;
+  return (
+    m.mine && m.kind === 'text' && m.payload?.t === 'text' && !m.id.startsWith('local:') && m.status !== 'failed' &&
+    mins > 0 && Date.now() - Date.parse(m.createdAt) < mins * 60_000
+  );
+}
+
+/** Fix a typo: re-encrypt the new text for both people and replace it. Shows instantly; rolls back if the server says no. */
+export function editMessage(m: Msg, body: string): Promise<void> {
+  const text = body.trim().slice(0, 4000);
+  const old = m.payload;
+  if (!text || old?.t !== 'text' || text === old.body) return Promise.resolve();
+  const peer = contactById(m.to);
+  const keys = state.keys;
+  if (!peer?.publicKey || !keys) return Promise.reject(new Error('This contact has no encryption key yet'));
+  if (!socket?.connected) return Promise.reject(new Error('You are offline'));
+  const payload: Payload = { ...old, body: text };
+  const sealed = seal(payload, peer.publicKey, keys);
+  const prevEdited = m.editedAt ?? null;
+  patchMsg(m.id, { payload, editedAt: new Date().toISOString() });
+  return new Promise((resolve, reject) => {
+    socket!.timeout(10_000).emit('edit', { id: m.id, ...sealed }, (err: any, res: any) => {
+      if (err || res?.error) {
+        patchMsg(m.id, { payload: old, editedAt: prevEdited });
+        return reject(new Error(res?.error || 'Could not edit. Check your connection.'));
+      }
+      const at = res?.message?.editedAt ?? res?.editedAt;
+      if (at) patchMsg(m.id, { editedAt: at });
+      resolve();
+    });
+  });
 }
 
 export function retry(m: Msg) {
