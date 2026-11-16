@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Row, Sheet, T, tap } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
 import {
-  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping,
+  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping, sendTypingText, markPhotoViewed,
   reportScreenshot, setChatTimer, blockUser, report, removeContact, getState, decodeBase64,
 } from '@/lib/store';
 import { encodeBase64, safetyCode } from '@/lib/crypto';
@@ -31,6 +31,8 @@ export default function Chat() {
   const peer = useStore((s) => s.contacts.find((x) => x.user.id === peerId)?.user);
   const all = useStore((s) => s.messages);
   const typing = useStore((s) => Boolean(s.typing[peerId]));
+  const synced = useStore((s) => s.synced);
+  const typingText = useStore((s) => s.typingText[peerId] || '');
   const timer = useStore((s) => s.timers[peerId] ?? null);
   const mediaEnabled = useStore((s) => s.config?.mediaEnabled);
 
@@ -45,6 +47,7 @@ export default function Chat() {
   const [editing, setEditing] = useState<Msg | null>(null);
   const [, tick] = useState(0);
   const appActive = useRef(AppState.currentState === 'active');
+  const viewerOpen = useRef(false); // while the full-screen photo viewer covers the chat, don't mark messages seen
 
   const list = useMemo(
     () => Object.values(all).filter((m) => peerOf(m) === peerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -64,10 +67,10 @@ export default function Chat() {
 
   // ----- vanish-on-seen -----
   const seeVisible = useCallback(() => {
-    if (!appActive.current) return;
+    if (!appActive.current || viewerOpen.current) return;
     const ids = getState()
       ? Object.values(getState().messages)
-          .filter((m) => peerOf(m) === peerId && !m.mine && m.kind === 'text' && !m.seenAt && !m.readLocally)
+          .filter((m) => peerOf(m) === peerId && !m.mine && m.kind === 'text' && !!m.payload && !m.seenAt && !m.readLocally)
           .map((m) => m.id)
       : [];
     if (ids.length) markSeen(ids);
@@ -76,6 +79,12 @@ export default function Chat() {
   useEffect(() => {
     seeVisible();
   }, [list.length, seeVisible]);
+
+  // The photo viewer is a full-screen overlay: pause seen-marking while it's up, resume (and catch up) on close.
+  useEffect(() => {
+    viewerOpen.current = !!viewer;
+    if (!viewer) seeVisible();
+  }, [viewer, seeVisible]);
 
   useEffect(() => {
     setOpenChat(peerId);
@@ -103,9 +112,15 @@ export default function Chat() {
   if (!peer) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 }}>
-        <T variant="heading">Chat not available</T>
-        <T variant="small" style={{ textAlign: 'center' }}>You're no longer connected with this person.</T>
-        <Button title="Back to chats" small onPress={() => router.replace('/chats')} />
+        {!synced ? (
+          <ActivityIndicator color={c.accent} />
+        ) : (
+          <>
+            <T variant="heading">Chat not available</T>
+            <T variant="small" style={{ textAlign: 'center' }}>You're no longer connected with this person.</T>
+            <Button title="Back to chats" small onPress={() => router.replace('/chats')} />
+          </>
+        )}
       </SafeAreaView>
     );
   }
@@ -158,12 +173,16 @@ export default function Chat() {
       if (!bytes) throw new Error('This photo is gone');
       setViewer({ msg: m, uri: `data:image/jpeg;base64,${encodeBase64(bytes)}`, loading: false });
     } catch (e: any) {
+      markPhotoViewed(m.id);
       setViewer({ msg: m, uri: null, loading: false, error: e.message });
     }
   };
 
   const closeViewer = () => {
-    if (viewer?.msg) markSeen([viewer.msg.id]); // view once: gone for both
+    if (viewer?.msg) {
+      markSeen([viewer.msg.id]); // view once: gone for both
+      markPhotoViewed(viewer.msg.id); // and show it as opened here, no longer tappable
+    }
     setViewer(null);
   };
 
@@ -174,7 +193,7 @@ export default function Chat() {
       <KeyboardAvoidingView style={{ flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {/* header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border }}>
-          <IconButton icon="chevron-back" label="Back to chats" onPress={() => router.back()} />
+          <IconButton icon="chevron-back" label="Back to chats" onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/chats'); }} />
           <Avatar name={peer.username} size={40} online={peer.online} />
           <View style={{ flex: 1, minWidth: 0, marginLeft: 6 }}>
             <T variant="bodyStrong" numberOfLines={1}>{peer.displayName !== peer.username ? peer.displayName : peer.username}</T>
@@ -200,10 +219,16 @@ export default function Chat() {
           contentContainerStyle={{ padding: 16, gap: 8 }}
           keyboardShouldPersistTaps="handled"
           ListFooterComponent={
-            <View style={{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 12, backgroundColor: c.surface2, marginBottom: 12, maxWidth: 340 }}>
-              <Ionicons name="lock-closed" size={13} color={c.accentText} />
-              <T variant="small" style={{ fontSize: 12, flexShrink: 1 }}>
-                {isWeb ? 'End-to-end encrypted · Messages vanish once seen · Browsers can’t block screenshots' : 'End-to-end encrypted · Messages vanish once seen · Screenshots blocked'}
+            <View style={{ alignSelf: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, backgroundColor: c.surface2, marginBottom: 12, maxWidth: 360 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="lock-closed" size={13} color={c.accentText} />
+                <T variant="label" color={c.accentText}>End-to-end encrypted</T>
+              </View>
+              <T variant="small" style={{ fontSize: 12.5, lineHeight: 18 }}>
+                Private conversations between just the two of you. Messages disappear once seen — once a message is viewed it cannot be recovered or restored. No permanent chat history.{isWeb ? ' Browsers can’t block screenshots.' : ' Screenshots are blocked.'}
+              </T>
+              <T variant="small" color={c.muted} style={{ fontSize: 12.5, lineHeight: 18 }}>
+                Be respectful and considerate of each other. Messages are temporary, so read attentively and think before you send. Communicate openly, protect each other’s privacy, and treat every conversation with care.
               </T>
             </View>
           }
@@ -231,8 +256,14 @@ export default function Chat() {
 
         {typing ? (
           <View style={{ paddingHorizontal: 16, paddingBottom: 6 }}>
-            <View style={{ alignSelf: 'flex-start', flexDirection: 'row', gap: 5, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 20, borderBottomLeftRadius: 6, backgroundColor: c.bubbleIn }} accessibilityLabel={`${peer.username} is typing`}>
-              {[0.5, 0.75, 1].map((o, i) => <View key={i} style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.muted, opacity: o }} />)}
+            <View style={{ alignSelf: 'flex-start', maxWidth: '82%', paddingVertical: typingText ? 10 : 14, paddingHorizontal: 16, borderRadius: 20, borderBottomLeftRadius: 6, backgroundColor: c.bubbleIn }} accessibilityLabel={typingText ? `${peer.username} is typing: ${typingText}` : `${peer.username} is typing`}>
+              {typingText ? (
+                <T style={{ fontSize: 15, color: c.muted, fontStyle: 'italic' }}>{typingText}</T>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 5 }}>
+                  {[0.5, 0.75, 1].map((o, i) => <View key={i} style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.muted, opacity: o }} />)}
+                </View>
+              )}
             </View>
           </View>
         ) : null}
@@ -282,9 +313,12 @@ export default function Chat() {
               value={text}
               onChangeText={(t) => {
                 setText(t);
-                sendTyping(peerId, t.length > 0);
+                if (!editing) {
+                  sendTyping(peerId, t.length > 0);
+                  sendTypingText(peerId, t);
+                }
               }}
-              placeholder={timer ? `Message · vanishes ${timerShort(timer)} after seen` : 'Message · vanishes once seen'}
+              placeholder={timer ? `Message · ${timerShort(timer)}` : 'Message'}
               placeholderTextColor={c.faint}
               multiline
               onKeyPress={(e: any) => {
@@ -338,7 +372,7 @@ export default function Chat() {
           <Row icon="copy-outline" label="Copy text" onPress={() => { Clipboard.setStringAsync((menuFor.payload as any).body); setMenuFor(null); }} />
         ) : null}
         {menuFor && canEdit(menuFor) ? (
-          <Row icon="create-outline" label="Edit" onPress={() => { setReplyTo(null); setEditing(menuFor); setText((menuFor.payload as any).body); setMenuFor(null); }} />
+          <Row icon="create-outline" label="Edit" onPress={() => { setReplyTo(null); sendTyping(peerId, false); sendTypingText(peerId, ''); setEditing(menuFor); setText((menuFor.payload as any).body); setMenuFor(null); }} />
         ) : null}
         {menuFor?.status === 'failed' ? <Row icon="refresh" label="Try sending again" onPress={() => { retry(menuFor); setMenuFor(null); }} /> : null}
         {menuFor?.mine && menuFor.kind !== 'screenshot' ? (
@@ -375,8 +409,8 @@ export default function Chat() {
       <Sheet visible={sheet === 'more'} onClose={() => setSheet(null)} title={`@${peer.username}`}>
         <Row icon="shield-checkmark-outline" label="Verify safety code" sub="Make sure nobody is in the middle" onPress={() => setSheet('safety')} />
         <Row icon="flag-outline" label="Report" onPress={() => { setReportMsg(null); setSheet('report'); }} />
-        <Row icon="trash-outline" label="Delete chat" sub="Clears all messages for both of you" danger onPress={() => setSheet('delete')} />
         <Row icon="person-remove-outline" label="Remove from chats" onPress={async () => { setSheet(null); await removeContact(peerId); router.replace('/chats'); }} />
+        <Row icon="trash-outline" label="Delete chat" sub="Clears all messages for both of you" danger onPress={() => setSheet('delete')} />
         <Row icon="ban-outline" label={`Block @${peer.username}`} danger onPress={async () => { setSheet(null); await blockUser(peerId); router.replace('/chats'); }} />
       </Sheet>
 
@@ -465,30 +499,31 @@ function MessageItem({
 
   const mine = m.mine;
   const reactions = Object.values(m.reactions);
-  const status =
-    m.status === 'sending' ? 'Sending…'
-      : m.status === 'failed' ? 'Not sent · tap to retry'
-        : m.vanishing ? 'Seen · gone when you leave'
-          : m.status === 'seen' && m.timer && m.expiresAt ? `Seen · vanishes in ${countdown(m.expiresAt)}`
-            : m.status === 'seen' ? 'Seen'
-              : m.status === 'delivered' ? 'Delivered' : 'Sent';
+  // WhatsApp-style ticks: one grey = sent, two grey = delivered, two coloured = read.
+  const tick =
+    m.status === 'sending' ? <Ionicons name="time-outline" size={13} color={c.faint} />
+      : m.status === 'seen' || m.vanishing ? <Ionicons name="checkmark-done" size={16} color={c.accentText} />
+        : m.status === 'delivered' ? <Ionicons name="checkmark-done" size={16} color={c.faint} />
+          : m.status === 'sent' ? <Ionicons name="checkmark" size={15} color={c.faint} />
+            : null;
 
   const incomingTimed = !mine && m.timer && m.expiresAt && m.seenAt;
 
+  const photoViewed = !mine && !!m.readLocally;
   const body = m.payload?.t === 'photo' ? (
     <Pressable
-      onPress={mine ? undefined : onOpenPhoto}
+      onPress={mine || photoViewed ? undefined : onOpenPhoto}
       onLongPress={onLongPress}
-      accessibilityRole={mine ? 'text' : 'button'}
-      accessibilityLabel={mine ? 'View-once photo you sent' : 'View-once photo. Tap to open'}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, width: 230, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface2, ...(mine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) }}
+      accessibilityRole={mine || photoViewed ? 'text' : 'button'}
+      accessibilityLabel={mine ? 'View-once photo you sent' : photoViewed ? 'Photo already opened and gone' : 'View-once photo. Tap to open'}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, width: 230, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface2, opacity: photoViewed ? 0.6 : 1, ...(mine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) }}
     >
       <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: c.accentSoft, alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name="image-outline" size={20} color={c.accentText} />
+        <Ionicons name={photoViewed ? 'eye-off-outline' : 'image-outline'} size={20} color={c.accentText} />
       </View>
       <View style={{ flex: 1 }}>
         <T style={{ fontFamily: fonts.semibold, fontSize: 14 }}>Photo · view once</T>
-        <T variant="small" style={{ fontSize: 12 }}>{mine ? 'Gone once they open it' : 'Tap to open'}</T>
+        <T variant="small" style={{ fontSize: 12 }}>{mine ? 'Gone once they open it' : photoViewed ? 'Opened · no longer available' : 'Tap to open'}</T>
       </View>
     </Pressable>
   ) : (
@@ -525,9 +560,16 @@ function MessageItem({
         </View>
       ) : null}
       {mine && (showMeta || m.status === 'failed' || m.vanishing || m.editedAt) ? (
-        <T variant="small" style={{ fontSize: 11 }} color={m.status === 'failed' ? c.danger : c.faint}>
-          {m.editedAt ? 'Edited · ' : ''}{status}{m.status !== 'sending' && m.status !== 'failed' ? ` · ${clock(m.createdAt)}` : ''}
-        </T>
+        m.status === 'failed' ? (
+          <T variant="small" style={{ fontSize: 11 }} color={c.danger}>Not sent · tap to retry</T>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <T variant="small" style={{ fontSize: 11 }} color={c.faint}>
+              {m.editedAt ? 'Edited · ' : ''}{m.status === 'sending' ? 'Sending…' : clock(m.createdAt)}{m.status === 'seen' && m.timer && m.expiresAt ? ` · ${countdown(m.expiresAt)}` : ''}
+            </T>
+            {tick}
+          </View>
+        )
       ) : null}
       {!mine && (showMeta || incomingTimed || m.editedAt) ? (
         <T variant="small" style={{ fontSize: 11 }} color={c.faint}>
