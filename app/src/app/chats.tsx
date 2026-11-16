@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, Pressable, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Screen, Sheet, T, tap, ThemeToggle } from '@/components/ui';
@@ -19,6 +19,7 @@ export default function Chats() {
   const typing = useStore((s) => s.typing);
   const connected = useStore((s) => s.connected);
   const announcement = useStore((s) => s.config?.announcement);
+  const synced = useStore((s) => s.synced);
   const [toDelete, setToDelete] = useState<Conn['user'] | null>(null);
   const [busy, setBusy] = useState(false);
   const dismissed = useStore((s) => s.announcementDismissed);
@@ -115,13 +116,19 @@ export default function Chats() {
           </View>
         }
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingHorizontal: 40, paddingTop: 60, gap: 12 }}>
-            <View style={{ width: 72, height: 72, borderRadius: 24, backgroundColor: c.accentSoft, alignItems: 'center', justifyContent: 'center' }}>
-              <Ionicons name="chatbubbles-outline" size={34} color={c.accentText} />
+          !synced ? (
+            <View style={{ alignItems: 'center', paddingTop: 80 }}>
+              <ActivityIndicator color={c.accent} />
             </View>
-            <T variant="heading" style={{ fontSize: 20 }}>No chats yet</T>
-            <T variant="small" style={{ textAlign: 'center' }}>Search for a friend's exact username and send a request. You can chat once they accept.</T>
-          </View>
+          ) : (
+            <View style={{ alignItems: 'center', paddingHorizontal: 40, paddingTop: 60, gap: 12 }}>
+              <View style={{ width: 72, height: 72, borderRadius: 24, backgroundColor: c.accentSoft, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="chatbubbles-outline" size={34} color={c.accentText} />
+              </View>
+              <T variant="heading" style={{ fontSize: 20 }}>No chats yet</T>
+              <T variant="small" style={{ textAlign: 'center' }}>Search for a friend's exact username and send a request. You can chat once they accept.</T>
+            </View>
+          )
         }
         renderItem={({ item }) => {
           const st = status(item);
