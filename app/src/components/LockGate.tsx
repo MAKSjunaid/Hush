@@ -96,7 +96,7 @@ function LockScreen({ onUnlock }: { onUnlock: () => void }) {
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, padding: 24 }}>
         <Logo size={64} />
         <View style={{ alignItems: 'center', gap: 6 }}>
-          <T variant="heading">Hush is locked</T>
+          <T variant="heading">HushChat is locked</T>
           <T variant="small" color={error ? c.danger : c.muted}>{error ? 'Wrong PIN, try again' : 'Enter your 4-digit PIN'}</T>
         </View>
         <View style={{ flexDirection: 'row', gap: 16 }} accessibilityLabel={`${pin.length} of 4 digits entered`}>

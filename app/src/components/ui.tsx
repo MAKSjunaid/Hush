@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ActivityIndicator, Modal, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, TextStyle, View, ViewStyle,
+  ActivityIndicator, Image, Modal, Pressable, StyleProp, StyleSheet, Text, TextInput, TextInputProps, TextStyle, View, ViewStyle,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,7 +60,7 @@ export function Logo({ size = 52 }: { size?: number }) {
   return (
     <View
       style={{ width: size, height: size, borderRadius: size * 0.31, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center' }}
-      accessibilityLabel="Hush"
+      accessibilityLabel="HushChat"
     >
       <Text style={{ fontFamily: fonts.display, fontSize: size * 0.56, color: c.onAccent, marginTop: -size * 0.04 }}>h</Text>
     </View>
@@ -213,14 +213,25 @@ export function Field({
   );
 }
 
-export function Avatar({ name, size = 52, online }: { name: string; size?: number; online?: boolean }) {
+export function Avatar({ name, size = 52, online, uri }: { name: string; size?: number; online?: boolean; uri?: string | null }) {
   const { c } = useTheme();
   const [bg, fg] = avatarColors(name, c.dark);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => setFailed(false), [uri]);
+  const showPhoto = !!uri && !failed;
   return (
     <View style={{ width: size, height: size }}>
-      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontFamily: fonts.semibold, fontSize: size * 0.34, color: fg }}>{initials(name)}</Text>
-      </View>
+      {showPhoto ? (
+        <Image
+          source={{ uri: uri! }}
+          onError={() => setFailed(true)}
+          style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg }}
+        />
+      ) : (
+        <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontFamily: fonts.semibold, fontSize: size * 0.34, color: fg }}>{initials(name)}</Text>
+        </View>
+      )}
       {online ? (
         <View
           accessibilityLabel="online"
