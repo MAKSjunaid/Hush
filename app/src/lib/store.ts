@@ -59,6 +59,7 @@ export type AppConfig = {
 
 type State = {
   ready: boolean;
+  synced: boolean; // first contacts fetch done — until then, don't flash empty states
   token: string | null;
   me: Me | null;
   keys: KeyPair | null;
@@ -67,6 +68,7 @@ type State = {
   outgoing: Conn[];
   messages: Record<string, Msg>;
   typing: Record<string, number>;
+  typingText: Record<string, string>; // peerId -> what they're currently typing (live preview)
   connected: boolean;
   config: AppConfig | null;
   announcementDismissed: string | null;
@@ -77,6 +79,7 @@ type State = {
 
 let state: State = {
   ready: false,
+  synced: false,
   token: null,
   me: null,
   keys: null,
@@ -85,6 +88,7 @@ let state: State = {
   outgoing: [],
   messages: {},
   typing: {},
+  typingText: {},
   connected: false,
   config: null,
   announcementDismissed: null,
@@ -242,15 +246,27 @@ function connectSocket() {
     clearTimeout(typingTimers[from]);
     set((s) => {
       const typing = { ...s.typing };
+      const typingText = { ...s.typingText };
       if (on) typing[from] = Date.now();
-      else delete typing[from];
-      return { typing };
+      else { delete typing[from]; delete typingText[from]; }
+      return { typing, typingText };
     });
     if (on) typingTimers[from] = setTimeout(() => set((s) => {
       const typing = { ...s.typing };
+      const typingText = { ...s.typingText };
       delete typing[from];
-      return { typing };
+      delete typingText[from];
+      return { typing, typingText };
     }), 6000);
+  });
+  // Live preview of what the other person is typing (encrypted, never stored).
+  socket.on('typing_text', ({ from, ciphertext, nonce }) => {
+    const keys = state.keys;
+    const pk = contactById(from)?.publicKey;
+    if (!keys || !pk) return;
+    const payload = open(ciphertext, nonce, pk, keys);
+    const body = payload?.t === 'text' ? payload.body : '';
+    set((s) => (s.typing[from] !== undefined || body ? { typingText: { ...s.typingText, [from]: body } } : {}));
   });
   socket.on('presence', ({ userId, online, lastSeen }) => {
     set((s) => ({
@@ -352,14 +368,14 @@ export async function signup(username: string, displayName: string, password: st
 }
 
 export async function login(username: string, password: string) {
-  const keys = newKeyPair();
+  const keys = (await loadKeyPair()) ?? newKeyPair();
   const res = await api<{ token: string; user: Me }>('/auth/login', { body: { username, password, publicKey: keys.publicKey } });
   await startSession(res.token, res.user, keys);
   AsyncStorage.setItem('hush.me', JSON.stringify(res.user));
 }
 
 export async function recover(username: string, recoveryKey: string, newPassword: string) {
-  const keys = newKeyPair();
+  const keys = (await loadKeyPair()) ?? newKeyPair();
   const res = await api<{ token: string; user: Me }>('/auth/recover', {
     body: { username, recoveryKey, newPassword, publicKey: keys.publicKey },
   });
@@ -368,20 +384,23 @@ export async function recover(username: string, recoveryKey: string, newPassword
 
 export const clearRecoveryKey = () => set({ pendingRecoveryKey: null });
 
-async function wipeLocal() {
+// forgetKeys=true only on an explicit log out / delete account. A transient or forced session end
+// KEEPS the device's keypair, so logging back in on the same device restores identity and message history
+// (otherwise a new keypair would be made and old messages show "could not be decrypted").
+async function wipeLocal(forgetKeys = false) {
   socket?.disconnect();
   socket = null;
   setApiToken(null);
   await setSecret('hush.token', null);
-  await clearKeyPair();
+  if (forgetKeys) await clearKeyPair();
   await AsyncStorage.multiRemove(['hush.me', 'hush.timers']);
   clearApiCache();
-  set({ token: null, me: null, keys: null, contacts: [], incoming: [], outgoing: [], messages: {}, typing: {}, connected: false });
+  set({ token: null, me: null, keys: forgetKeys ? null : state.keys, contacts: [], incoming: [], outgoing: [], messages: {}, typing: {}, typingText: {}, connected: false, synced: false });
 }
 
 export async function logout() {
   await api('/me/push-token', { body: { token: null } }).catch(() => {});
-  await wipeLocal();
+  await wipeLocal(true);
 }
 
 async function endSession(reason: string | null) {
@@ -391,7 +410,7 @@ async function endSession(reason: string | null) {
 
 export async function deleteAccount(password: string) {
   await api('/me', { method: 'DELETE', body: { password } });
-  await wipeLocal();
+  await wipeLocal(true);
 }
 
 export async function updateMe(patch: { displayName?: string; settings?: Settings }) {
@@ -420,6 +439,7 @@ export function refreshConnections(): Promise<void> {
         set({ contacts: d.contacts, incoming: d.incoming, outgoing: d.outgoing });
         clearApiCache('/users/search');
       } catch {}
+      if (!state.synced) set({ synced: true });
       waiters.forEach((w) => w());
     }, 150);
   });
@@ -638,6 +658,32 @@ export function sendTyping(peerId: string, on: boolean) {
   if (on && now - lastTyping < 2500) return;
   lastTyping = on ? now : 0;
   socket.emit('typing', { to: peerId, on });
+}
+
+// Live typing preview — kept light: at most one socket frame per 600ms, and only when the text
+// actually changed since the last frame (a long pause or an unchanged value sends nothing).
+let typingTextTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingTypingText = '';
+let lastSentTypingText = '\u0000'; // sentinel so the first frame always sends
+export function sendTypingText(peerId: string, text: string) {
+  if (state.me?.settings?.typing === false || !socket?.connected) return;
+  pendingTypingText = text.slice(0, 500);
+  if (typingTextTimer) return;
+  typingTextTimer = setTimeout(() => {
+    typingTextTimer = null;
+    if (pendingTypingText === lastSentTypingText) return; // nothing new → no frame
+    const peer = contactById(peerId);
+    const keys = state.keys;
+    if (!peer?.publicKey || !keys || !socket?.connected) return;
+    lastSentTypingText = pendingTypingText;
+    const sealed = seal({ t: 'text', body: pendingTypingText }, peer.publicKey, keys);
+    socket.emit('typing_text', { to: peerId, ciphertext: sealed.ciphertext, nonce: sealed.nonce });
+  }, 600);
+}
+
+/** A view-once photo you just opened/closed: show it as opened here so it no longer invites a tap. */
+export function markPhotoViewed(id: string) {
+  patchMsg(id, { readLocally: true });
 }
 
 export function reportScreenshot(peerId: string) {

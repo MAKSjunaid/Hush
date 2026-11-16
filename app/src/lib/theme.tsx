@@ -64,7 +64,7 @@ export const lightPalette: Palette = {
   accentSoft: '#ECE9FF',
   accentText: '#5242C9',
   bubbleIn: '#FFFFFF',
-  bubbleOut: '#6A5AE0',
+  bubbleOut: '#5A42F0',
   onBubbleOut: '#FFFFFF',
   success: '#13795B',
   warn: '#9A5B00',
