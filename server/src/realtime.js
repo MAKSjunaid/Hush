@@ -168,6 +168,8 @@ function mayHavePending(userId) {
 }
 
 // Last-active + daily-active tracking: at most one small write per user every 5 minutes.
+const OFFLINE_GRACE_MS = 20_000;
+const goingOffline = new Map(); // userId -> timer (cleared on reconnect, so the map never grows past live sockets)
 const lastTouch = registerCache(new TTLCache({ ttlMs: 5 * 60_000, max: 20_000 }));
 async function touchActive(userId) {
   if (lastTouch.get(userId)) return;
@@ -196,13 +198,19 @@ export function attachRealtime(httpServer) {
   io.on('connection', async (socket) => {
     const userId = socket.data.userId;
     socket.join(`u:${userId}`);
+    // Back within the grace period (page reload, network blip)? Then nobody ever saw them go offline.
+    const wasGoingOffline = goingOffline.has(userId);
+    if (wasGoingOffline) {
+      clearTimeout(goingOffline.get(userId));
+      goingOffline.delete(userId);
+    }
     const first = !online.has(userId);
     if (first) online.set(userId, new Set());
     online.get(userId).add(socket.id);
 
     const me = await getUser(userId);
     await touchActive(userId);
-    if (first && me) broadcastPresence(me, true);
+    if (first && me && !wasGoingOffline) broadcastPresence(me, true);
 
     // Everything waiting for this user is now delivered (only queried if something may be waiting).
     if (mayHavePending(userId)) {
@@ -357,11 +365,16 @@ export function attachRealtime(httpServer) {
         set.delete(socket.id);
         if (set.size === 0) {
           online.delete(userId);
-          const fresh = await one('UPDATE users SET last_active_at = now() WHERE id = $1 RETURNING *', [userId]).catch(() => null);
-          if (fresh) {
-            cacheUser(fresh);
-            broadcastPresence(fresh, false);
-          }
+          // Wait a moment before marking them offline: reloads and reconnects cost no DB write and no flicker.
+          goingOffline.set(userId, setTimeout(async () => {
+            goingOffline.delete(userId);
+            if (online.has(userId)) return;
+            const fresh = await one('UPDATE users SET last_active_at = now() WHERE id = $1 RETURNING *', [userId]).catch(() => null);
+            if (fresh) {
+              cacheUser(fresh);
+              broadcastPresence(fresh, false);
+            }
+          }, OFFLINE_GRACE_MS).unref());
         }
       }
     });

@@ -350,11 +350,10 @@ api.get('/messages/sync', requireUser, wrap(async (req, res) => {
       ORDER BY created_at ASC LIMIT 2000`,
     [req.user.id],
   );
-  const { rows: reacts } = await q(
-    `SELECT r.message_id, r.user_id, r.emoji FROM reactions r JOIN messages m ON m.id = r.message_id
-      WHERE (m.sender_id = $1 OR m.recipient_id = $1) AND m.expires_at > now()`,
-    [req.user.id],
-  );
+  // Reactions only for the messages we're returning (and no query at all when there are none).
+  const reacts = rows.length
+    ? (await q('SELECT message_id, user_id, emoji FROM reactions WHERE message_id = ANY($1::uuid[])', [rows.map((m) => m.id)])).rows
+    : [];
   res.json({
     messages: rows.map((m) => serializeMessage({ ...m, self_ciphertext: m.ciphertext, self_nonce: m.nonce }, req.user.id)),
     reactions: reacts.map((r) => ({ id: r.message_id, userId: r.user_id, emoji: r.emoji })),
