@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { q, one, bumpStat, getSetting } from './db.js';
+import { q, one, bumpStat, getSetting, getUser, cacheUser, forgetUser } from './db.js';
 import {
   normalizeUsername, validateUsername, validatePassword, hash, compare, newRecoveryKey,
   normalizeRecoveryKey, signToken, requireUser, publicUser, selfUser,
 } from './auth.js';
-import { emitTo, kickUser, isOnline, serializeMessage } from './realtime.js';
+import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair } from './realtime.js';
 import { pushNewMessage } from './push.js';
 import { presignUpload, presignDownload, mediaEnabled, deleteMedia } from './storage.js';
 
@@ -63,6 +63,7 @@ api.post('/auth/signup', authLimit, wrap(async (req, res) => {
       [username, displayName, await hash(password), await hash(recoveryKey), publicKey],
     );
     bumpStat('signups');
+    cacheUser(user);
     res.json({ token: signToken(user), user: selfUser(user), recoveryKey });
   } catch (e) {
     if (e.code === '23505') return bad(res, 'That username was just taken', 409);
@@ -73,11 +74,11 @@ api.post('/auth/signup', authLimit, wrap(async (req, res) => {
 async function startSession(user, publicKey) {
   // One active device per account: a new login replaces the old device and its key.
   kickUser(user.id, 'session_replaced');
-  return one(
+  return cacheUser(await one(
     `UPDATE users SET token_version = token_version + 1, public_key = $2, push_token = NULL, last_active_at = now()
       WHERE id = $1 RETURNING *`,
     [user.id, publicKey],
-  );
+  ));
 }
 
 api.post('/auth/login', authLimit, wrap(async (req, res) => {
@@ -121,6 +122,7 @@ api.patch('/me', requireUser, wrap(async (req, res) => {
     'UPDATE users SET display_name = COALESCE($2, display_name), settings = $3 WHERE id = $1 RETURNING *',
     [req.user.id, displayName || null, JSON.stringify(settings)],
   );
+  cacheUser(user);
   res.json({ user: selfUser(user) });
 }));
 
@@ -135,6 +137,7 @@ api.post('/me/username', requireUser, authLimit, wrap(async (req, res) => {
   try {
     const user = await one('UPDATE users SET username = $2, username_changed_at = now() WHERE id = $1 RETURNING *',
       [req.user.id, u]);
+    cacheUser(user);
     res.json({ user: selfUser(user) });
   } catch (e) {
     if (e.code === '23505') return bad(res, 'Already taken', 409);
@@ -147,12 +150,15 @@ api.post('/me/password', requireUser, authLimit, wrap(async (req, res) => {
   const pErr = validatePassword(req.body.newPassword);
   if (pErr) return bad(res, pErr);
   await q('UPDATE users SET password_hash = $2 WHERE id = $1', [req.user.id, await hash(req.body.newPassword)]);
+  forgetUser(req.user.id);
   res.json({ ok: true });
 }));
 
 api.post('/me/push-token', requireUser, wrap(async (req, res) => {
   const token = req.body.token ? String(req.body.token).slice(0, 200) : null;
-  await q('UPDATE users SET push_token = $2 WHERE id = $1', [req.user.id, token]);
+  if (token !== req.user.push_token) {
+    cacheUser(await one('UPDATE users SET push_token = $2 WHERE id = $1 RETURNING *', [req.user.id, token]));
+  }
   res.json({ ok: true });
 }));
 
@@ -161,7 +167,16 @@ api.delete('/me', requireUser, wrap(async (req, res) => {
   const { rows } = await q('SELECT media_key FROM messages WHERE sender_id = $1 AND media_key IS NOT NULL', [req.user.id]);
   rows.forEach((r) => deleteMedia(r.media_key));
   kickUser(req.user.id, 'account_deleted');
+  const { rows: peers } = await q(
+    'SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS id FROM connections WHERE requester_id = $1 OR addressee_id = $1',
+    [req.user.id],
+  );
   await q('DELETE FROM users WHERE id = $1', [req.user.id]); // cascades: messages, connections, blocks…
+  forgetUser(req.user.id);
+  peers.forEach((p) => {
+    invalidatePair(req.user.id, p.id);
+    emitTo(p.id, 'connections', {});
+  });
   res.json({ ok: true });
 }));
 
@@ -170,7 +185,7 @@ api.get('/users/search', requireUser, searchLimit, wrap(async (req, res) => {
   const term = normalizeUsername(req.query.q).replace(/[%_\\]/g, '');
   if (term.length < 3) return res.json({ users: [] });
   const { rows } = await q(
-    `SELECT u.*, c.status AS conn_status, c.requester_id
+    `SELECT u.id, u.username, u.display_name, u.public_key, c.status AS conn_status, c.requester_id
        FROM users u
        LEFT JOIN connections c ON (c.requester_id = $1 AND c.addressee_id = u.id) OR (c.addressee_id = $1 AND c.requester_id = u.id)
       WHERE lower(u.username) LIKE $2 AND u.id <> $1 AND u.status = 'active'
@@ -192,7 +207,7 @@ api.get('/users/search', requireUser, searchLimit, wrap(async (req, res) => {
 
 api.get('/connections', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
-    `SELECT u.*, c.id AS connection_id, c.status AS conn_status, c.requester_id, c.created_at AS since
+    `SELECT u.id, u.username, u.display_name, u.public_key, u.settings, u.last_active_at, c.id AS connection_id, c.status AS conn_status, c.requester_id, c.created_at AS since
        FROM connections c
        JOIN users u ON u.id = CASE WHEN c.requester_id = $1 THEN c.addressee_id ELSE c.requester_id END
       WHERE (c.requester_id = $1 OR c.addressee_id = $1) AND c.status IN ('pending','accepted')
@@ -223,8 +238,8 @@ api.get('/connections', requireUser, wrap(async (req, res) => {
 api.post('/connections/request', requireUser, searchLimit, wrap(async (req, res) => {
   const to = String(req.body.userId || '');
   if (to === req.user.id) return bad(res, "You can't add yourself");
-  const target = await one(`SELECT * FROM users WHERE id = $1 AND status = 'active'`, [to]);
-  if (!target) return bad(res, 'User not found', 404);
+  const target = await getUser(to);
+  if (!target || target.status !== 'active') return bad(res, 'User not found', 404);
   const blocked = await one(
     'SELECT 1 FROM blocks WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)',
     [req.user.id, to],
@@ -232,9 +247,10 @@ api.post('/connections/request', requireUser, searchLimit, wrap(async (req, res)
   if (blocked) return bad(res, 'User not found', 404);
 
   // If they already asked me, sending a request back simply accepts theirs.
-  const reverse = await one(`SELECT * FROM connections WHERE requester_id = $1 AND addressee_id = $2`, [to, req.user.id]);
+  const reverse = await one(`SELECT id, status FROM connections WHERE requester_id = $1 AND addressee_id = $2`, [to, req.user.id]);
   if (reverse && reverse.status !== 'accepted') {
     await q(`UPDATE connections SET status = 'accepted', updated_at = now() WHERE id = $1`, [reverse.id]);
+    invalidatePair(req.user.id, to);
     emitTo(to, 'connections', {});
     return res.json({ status: 'accepted' });
   }
@@ -259,6 +275,7 @@ async function answer(req, res, status) {
     [req.params.id, req.user.id, status],
   );
   if (!row) return bad(res, 'Request not found', 404);
+  invalidatePair(req.user.id, row.requester_id);
   if (status === 'accepted') emitTo(row.requester_id, 'connections', {});
   res.json({ ok: true });
 }
@@ -270,6 +287,7 @@ api.delete('/connections/:userId', requireUser, wrap(async (req, res) => {
     `DELETE FROM connections WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
     [req.user.id, req.params.userId],
   );
+  invalidatePair(req.user.id, req.params.userId);
   emitTo(req.params.userId, 'connections', {});
   res.json({ ok: true });
 }));
@@ -277,7 +295,7 @@ api.delete('/connections/:userId', requireUser, wrap(async (req, res) => {
 // ---------- block / report ----------
 api.get('/blocks', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
-    'SELECT u.* FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC',
+    'SELECT u.id, u.username, u.display_name, u.public_key FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC',
     [req.user.id],
   );
   res.json({ users: rows.map(publicUser) });
@@ -286,6 +304,7 @@ api.get('/blocks', requireUser, wrap(async (req, res) => {
 api.post('/blocks', requireUser, wrap(async (req, res) => {
   const other = String(req.body.userId || '');
   await q('INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.user.id, other]);
+  invalidatePair(req.user.id, other);
   // Blocking wipes pending messages between the two.
   const { rows } = await q(
     `DELETE FROM messages WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
@@ -301,6 +320,7 @@ api.post('/blocks', requireUser, wrap(async (req, res) => {
 
 api.delete('/blocks/:userId', requireUser, wrap(async (req, res) => {
   await q('DELETE FROM blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
+  invalidatePair(req.user.id, req.params.userId);
   res.json({ ok: true });
 }));
 
@@ -310,23 +330,33 @@ api.post('/reports', requireUser, searchLimit, wrap(async (req, res) => {
   await q('INSERT INTO reports (reporter_id, reported_id, reason, evidence) VALUES ($1,$2,$3,$4)', [
     req.user.id, req.body.userId, reason, req.body.evidence ? String(req.body.evidence).slice(0, 4000) : null,
   ]);
-  if (req.body.block) await q('INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.user.id, req.body.userId]);
+  if (req.body.block) {
+    await q('INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.user.id, req.body.userId]);
+    invalidatePair(req.user.id, req.body.userId);
+    emitTo(req.body.userId, 'connections', {});
+  }
   res.json({ ok: true });
 }));
 
 // ---------- messages ----------
 api.get('/messages/sync', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
-    `SELECT * FROM messages WHERE (sender_id = $1 OR recipient_id = $1) AND expires_at > now()
+    // Only the columns the phone needs, and only the copy this user can decrypt.
+    `SELECT id, client_id, sender_id, recipient_id, kind, sender_public_key, media_key, reply_to, view_once,
+            timer_seconds, created_at, delivered_at, seen_at, expires_at,
+            CASE WHEN sender_id = $1 THEN self_ciphertext ELSE ciphertext END AS ciphertext,
+            CASE WHEN sender_id = $1 THEN self_nonce ELSE nonce END AS nonce
+       FROM messages WHERE (sender_id = $1 OR recipient_id = $1) AND expires_at > now()
       ORDER BY created_at ASC LIMIT 2000`,
     [req.user.id],
   );
   const { rows: reacts } = await q(
-    `SELECT r.* FROM reactions r JOIN messages m ON m.id = r.message_id WHERE m.sender_id = $1 OR m.recipient_id = $1`,
+    `SELECT r.message_id, r.user_id, r.emoji FROM reactions r JOIN messages m ON m.id = r.message_id
+      WHERE (m.sender_id = $1 OR m.recipient_id = $1) AND m.expires_at > now()`,
     [req.user.id],
   );
   res.json({
-    messages: rows.map((m) => serializeMessage(m, req.user.id)),
+    messages: rows.map((m) => serializeMessage({ ...m, self_ciphertext: m.ciphertext, self_nonce: m.nonce }, req.user.id)),
     reactions: reacts.map((r) => ({ id: r.message_id, userId: r.user_id, emoji: r.emoji })),
   });
 }));
