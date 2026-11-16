@@ -48,6 +48,7 @@ export default function Chat() {
   const [, tick] = useState(0);
   const appActive = useRef(AppState.currentState === 'active');
   const viewerOpen = useRef(false); // while the full-screen photo viewer covers the chat, don't mark messages seen
+  const inputRef = useRef<any>(null); // keep focus after sending so the user can keep typing
 
   const list = useMemo(
     () => Object.values(all).filter((m) => peerOf(m) === peerId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -230,19 +231,17 @@ export default function Chat() {
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: 16, gap: 8 }}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           ListFooterComponent={
-            // Inverted list: the footer sits at the very top of the conversation and scrolls away as
-            // messages fill in. Centered.
-            <View style={{ alignSelf: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14, backgroundColor: c.surface2, marginTop: 4, marginBottom: 14, maxWidth: 440 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Ionicons name="lock-closed" size={13} color={c.accentText} />
-                <T variant="label" color={c.accentText}>End-to-end encrypted</T>
+            // Inverted list: this sits at the very top of the conversation and scrolls up out of view
+            // as messages fill in — exactly like a chat's "start of conversation" notice. Compact + centered.
+            <View style={{ alignSelf: 'center', alignItems: 'center', gap: 4, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 12, backgroundColor: c.surface2, marginTop: 2, marginBottom: 12, maxWidth: 420 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="lock-closed" size={12} color={c.accentText} />
+                <T variant="label" color={c.accentText} style={{ fontSize: 12 }}>End-to-end encrypted</T>
               </View>
-              <T variant="small" style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
-                Private conversations between just the two of you. Messages disappear once seen — once a message is viewed it cannot be recovered or restored. No permanent chat history.{isWeb ? ' Browsers can’t block screenshots.' : ' Screenshots are blocked.'}
-              </T>
-              <T variant="small" color={c.muted} style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
-                Be respectful and considerate of each other. Messages are temporary, so read attentively and think before you send. Communicate openly, protect each other’s privacy, and treat every conversation with care.
+              <T variant="small" color={c.muted} style={{ fontSize: 11.5, lineHeight: 16, textAlign: 'center' }}>
+                Private, just between the two of you. Messages disappear once seen and can’t be recovered — no permanent history.{isWeb ? ' Browsers can’t block screenshots.' : ' Screenshots are blocked.'} Read attentively, think before you send, and treat every conversation with care.
               </T>
             </View>
           }
@@ -332,6 +331,7 @@ export default function Chat() {
           ) : null}
           <View style={{ flex: 1, minHeight: 44, maxHeight: 140, borderRadius: 22, backgroundColor: c.surface, borderWidth: c.dark ? 0 : 1, borderColor: c.border, paddingHorizontal: 16, justifyContent: 'center' }}>
             <TextInput
+              ref={inputRef}
               accessibilityLabel="Message"
               value={text}
               onChangeText={(t) => {
@@ -344,10 +344,12 @@ export default function Chat() {
               placeholder={timer ? `Message · ${timerShort(timer)}` : 'Message'}
               placeholderTextColor={c.faint}
               multiline
+              blurOnSubmit={false}
               onKeyPress={(e: any) => {
                 if (isWeb && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
                   e.preventDefault?.();
                   send();
+                  inputRef.current?.focus(); // keep typing without re-tapping
                 }
               }}
               style={[{ color: c.text, fontFamily: fonts.regular, fontSize: 16, paddingVertical: 11, maxHeight: 130 }, isWeb ? ({ outlineStyle: 'none' } as any) : null]}
@@ -357,9 +359,13 @@ export default function Chat() {
             accessibilityRole="button"
             accessibilityLabel="Send"
             disabled={!text.trim()}
+            // Don't let the button steal focus from the input (web), so the keyboard stays open.
+            onStartShouldSetResponder={() => true}
+            {...(isWeb ? { onMouseDown: (e: any) => e.preventDefault?.() } : {})}
             onPress={() => {
               tap();
               send();
+              inputRef.current?.focus(); // keep focus so the keyboard stays up for the next message
             }}
             style={({ pressed }) => ({ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: text.trim() ? (pressed ? 0.8 : 1) : 0.4 })}
           >
