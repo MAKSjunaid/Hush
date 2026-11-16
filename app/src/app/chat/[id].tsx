@@ -127,9 +127,12 @@ export default function Chat() {
       if (res.canceled || !res.assets?.[0]) return;
       setSending(true);
       const ctx = ImageManipulator.manipulate(res.assets[0].uri);
-      if ((res.assets[0].width || 0) > 1600) ctx.resize({ width: 1600 });
+      // ~1280px JPEG is sharp on any phone and only ~150–300 KB to store and send.
+      const a = res.assets[0];
+      if ((a.width || 0) >= (a.height || 0) && (a.width || 0) > 1280) ctx.resize({ width: 1280 });
+      else if ((a.height || 0) > 1280) ctx.resize({ height: 1280 });
       const img = await ctx.renderAsync();
-      const out = await img.saveAsync({ format: SaveFormat.JPEG, compress: 0.72, base64: true });
+      const out = await img.saveAsync({ format: SaveFormat.JPEG, compress: 0.65, base64: true });
       await sendPhoto(peerId, decodeBase64(out.base64!), out.width, out.height);
     } catch (e: any) {
       setErr(e.message || 'Could not send photo');
