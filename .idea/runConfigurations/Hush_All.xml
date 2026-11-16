@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Hush: server + web" type="CompoundRunConfigurationType">
+    <toRun name="1. Hush server" type="js.build_tools.npm" />
+    <toRun name="2. Hush web (browser)" type="js.build_tools.npm" />
+    <method v="2" />
+  </configuration>
+</component>
