@@ -1,0 +1,351 @@
+import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
+import { q, one, bumpStat, getSetting } from './db.js';
+import {
+  normalizeUsername, validateUsername, validatePassword, hash, compare, newRecoveryKey,
+  normalizeRecoveryKey, signToken, requireUser, publicUser, selfUser,
+} from './auth.js';
+import { emitTo, kickUser, isOnline, serializeMessage } from './realtime.js';
+import { pushNewMessage } from './push.js';
+import { presignUpload, presignDownload, mediaEnabled, deleteMedia } from './storage.js';
+
+export const api = Router();
+
+const authLimit = rateLimit({ windowMs: 60_000, limit: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many attempts. Wait a minute and try again.' } });
+const searchLimit = rateLimit({ windowMs: 60_000, limit: 40, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Searching too fast. Wait a moment.' } });
+
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const bad = (res, error, code = 400) => res.status(code).json({ error });
+
+function validKey(k) {
+  return typeof k === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(k); // 32-byte base64 public key
+}
+
+// ---------- public config ----------
+api.get('/config', wrap(async (_req, res) => {
+  res.json({
+    maintenance: await getSetting('maintenance', false),
+    announcement: await getSetting('announcement', null),
+    minAppVersion: await getSetting('minAppVersion', '1.0.0'),
+    latestAppVersion: await getSetting('latestAppVersion', '1.0.0'),
+    apkUrl: await getSetting('apkUrl', null),
+    iosUrl: await getSetting('iosUrl', null),
+    mediaEnabled: mediaEnabled(),
+  });
+}));
+
+// ---------- auth ----------
+api.get('/auth/username-available', searchLimit, wrap(async (req, res) => {
+  const u = normalizeUsername(req.query.u);
+  const err = validateUsername(u);
+  if (err) return res.json({ available: false, reason: err });
+  const taken = await one('SELECT 1 FROM users WHERE lower(username) = $1', [u]);
+  res.json({ available: !taken, reason: taken ? 'Already taken' : null });
+}));
+
+api.post('/auth/signup', authLimit, wrap(async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const displayName = String(req.body.displayName || '').trim().slice(0, 40) || username;
+  const { password, publicKey } = req.body;
+  const uErr = validateUsername(username);
+  if (uErr) return bad(res, uErr);
+  const pErr = validatePassword(password);
+  if (pErr) return bad(res, pErr);
+  if (!validKey(publicKey)) return bad(res, 'Missing encryption key');
+
+  const recoveryKey = newRecoveryKey();
+  try {
+    const user = await one(
+      `INSERT INTO users (username, display_name, password_hash, recovery_hash, public_key)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [username, displayName, await hash(password), await hash(recoveryKey), publicKey],
+    );
+    bumpStat('signups');
+    res.json({ token: signToken(user), user: selfUser(user), recoveryKey });
+  } catch (e) {
+    if (e.code === '23505') return bad(res, 'That username was just taken', 409);
+    throw e;
+  }
+}));
+
+async function startSession(user, publicKey) {
+  // One active device per account: a new login replaces the old device and its key.
+  kickUser(user.id, 'session_replaced');
+  return one(
+    `UPDATE users SET token_version = token_version + 1, public_key = $2, push_token = NULL, last_active_at = now()
+      WHERE id = $1 RETURNING *`,
+    [user.id, publicKey],
+  );
+}
+
+api.post('/auth/login', authLimit, wrap(async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const { password, publicKey } = req.body;
+  if (!validKey(publicKey)) return bad(res, 'Missing encryption key');
+  const user = await one('SELECT * FROM users WHERE lower(username) = $1', [username]);
+  if (!user || !(await compare(String(password || ''), user.password_hash))) {
+    return bad(res, 'Wrong username or password', 401);
+  }
+  if (user.status !== 'active') return bad(res, `This account is ${user.status}`, 403);
+  const fresh = await startSession(user, publicKey);
+  res.json({ token: signToken(fresh), user: selfUser(fresh) });
+}));
+
+api.post('/auth/recover', authLimit, wrap(async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const key = normalizeRecoveryKey(req.body.recoveryKey);
+  const { newPassword, publicKey } = req.body;
+  const pErr = validatePassword(newPassword);
+  if (pErr) return bad(res, pErr);
+  if (!validKey(publicKey)) return bad(res, 'Missing encryption key');
+  const user = await one('SELECT * FROM users WHERE lower(username) = $1', [username]);
+  if (!user || !(await compare(key, user.recovery_hash))) return bad(res, 'Username or recovery key is wrong', 401);
+  if (user.status !== 'active') return bad(res, `This account is ${user.status}`, 403);
+  await q('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, await hash(newPassword)]);
+  const fresh = await startSession(user, publicKey);
+  res.json({ token: signToken(fresh), user: selfUser(fresh) });
+}));
+
+// ---------- me ----------
+api.get('/me', requireUser, (req, res) => res.json({ user: selfUser(req.user) }));
+
+const ALLOWED_SETTINGS = ['showOnline', 'showLastSeen', 'readReceipts', 'typing', 'discoverable', 'notifications', 'defaultTimer'];
+
+api.patch('/me', requireUser, wrap(async (req, res) => {
+  const displayName = req.body.displayName != null ? String(req.body.displayName).trim().slice(0, 40) : null;
+  const settings = { ...(req.user.settings || {}) };
+  for (const k of ALLOWED_SETTINGS) if (k in (req.body.settings || {})) settings[k] = req.body.settings[k];
+  const user = await one(
+    'UPDATE users SET display_name = COALESCE($2, display_name), settings = $3 WHERE id = $1 RETURNING *',
+    [req.user.id, displayName || null, JSON.stringify(settings)],
+  );
+  res.json({ user: selfUser(user) });
+}));
+
+api.post('/me/username', requireUser, authLimit, wrap(async (req, res) => {
+  const u = normalizeUsername(req.body.username);
+  const err = validateUsername(u);
+  if (err) return bad(res, err);
+  const last = req.user.username_changed_at;
+  if (last && Date.now() - new Date(last).getTime() < 30 * 864e5) {
+    return bad(res, 'You can change your username once every 30 days');
+  }
+  try {
+    const user = await one('UPDATE users SET username = $2, username_changed_at = now() WHERE id = $1 RETURNING *',
+      [req.user.id, u]);
+    res.json({ user: selfUser(user) });
+  } catch (e) {
+    if (e.code === '23505') return bad(res, 'Already taken', 409);
+    throw e;
+  }
+}));
+
+api.post('/me/password', requireUser, authLimit, wrap(async (req, res) => {
+  if (!(await compare(String(req.body.currentPassword || ''), req.user.password_hash))) return bad(res, 'Current password is wrong', 401);
+  const pErr = validatePassword(req.body.newPassword);
+  if (pErr) return bad(res, pErr);
+  await q('UPDATE users SET password_hash = $2 WHERE id = $1', [req.user.id, await hash(req.body.newPassword)]);
+  res.json({ ok: true });
+}));
+
+api.post('/me/push-token', requireUser, wrap(async (req, res) => {
+  const token = req.body.token ? String(req.body.token).slice(0, 200) : null;
+  await q('UPDATE users SET push_token = $2 WHERE id = $1', [req.user.id, token]);
+  res.json({ ok: true });
+}));
+
+api.delete('/me', requireUser, wrap(async (req, res) => {
+  if (!(await compare(String(req.body?.password || ''), req.user.password_hash))) return bad(res, 'Password is wrong', 401);
+  const { rows } = await q('SELECT media_key FROM messages WHERE sender_id = $1 AND media_key IS NOT NULL', [req.user.id]);
+  rows.forEach((r) => deleteMedia(r.media_key));
+  kickUser(req.user.id, 'account_deleted');
+  await q('DELETE FROM users WHERE id = $1', [req.user.id]); // cascades: messages, connections, blocks…
+  res.json({ ok: true });
+}));
+
+// ---------- discovery ----------
+api.get('/users/search', requireUser, searchLimit, wrap(async (req, res) => {
+  const term = normalizeUsername(req.query.q).replace(/[%_\\]/g, '');
+  if (term.length < 3) return res.json({ users: [] });
+  const { rows } = await q(
+    `SELECT u.*, c.status AS conn_status, c.requester_id
+       FROM users u
+       LEFT JOIN connections c ON (c.requester_id = $1 AND c.addressee_id = u.id) OR (c.addressee_id = $1 AND c.requester_id = u.id)
+      WHERE lower(u.username) LIKE $2 AND u.id <> $1 AND u.status = 'active'
+        AND (lower(u.username) = $3 OR COALESCE((u.settings->>'discoverable')::boolean, true))
+        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = u.id AND b.blocked_id = $1) OR (b.blocker_id = $1 AND b.blocked_id = u.id))
+      ORDER BY (lower(u.username) = $3) DESC, length(u.username), u.username
+      LIMIT 15`,
+    [req.user.id, `${term}%`, term],
+  );
+  res.json({
+    users: rows.map((u) => ({
+      ...publicUser(u),
+      connection: u.conn_status
+        ? { status: u.conn_status, outgoing: u.requester_id === req.user.id }
+        : null,
+    })),
+  });
+}));
+
+api.get('/connections', requireUser, wrap(async (req, res) => {
+  const { rows } = await q(
+    `SELECT u.*, c.id AS connection_id, c.status AS conn_status, c.requester_id, c.created_at AS since
+       FROM connections c
+       JOIN users u ON u.id = CASE WHEN c.requester_id = $1 THEN c.addressee_id ELSE c.requester_id END
+      WHERE (c.requester_id = $1 OR c.addressee_id = $1) AND c.status IN ('pending','accepted')
+        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+      ORDER BY c.updated_at DESC`,
+    [req.user.id],
+  );
+  const map = (r) => {
+    const showOnline = r.settings?.showOnline !== false;
+    const showLastSeen = r.settings?.showLastSeen !== false;
+    return {
+      connectionId: r.connection_id,
+      since: r.since,
+      user: {
+        ...publicUser(r),
+        online: showOnline ? isOnline(r.id) : false,
+        lastSeen: showLastSeen ? r.last_active_at : null,
+      },
+    };
+  };
+  res.json({
+    contacts: rows.filter((r) => r.conn_status === 'accepted').map(map),
+    incoming: rows.filter((r) => r.conn_status === 'pending' && r.requester_id !== req.user.id).map(map),
+    outgoing: rows.filter((r) => r.conn_status === 'pending' && r.requester_id === req.user.id).map(map),
+  });
+}));
+
+api.post('/connections/request', requireUser, searchLimit, wrap(async (req, res) => {
+  const to = String(req.body.userId || '');
+  if (to === req.user.id) return bad(res, "You can't add yourself");
+  const target = await one(`SELECT * FROM users WHERE id = $1 AND status = 'active'`, [to]);
+  if (!target) return bad(res, 'User not found', 404);
+  const blocked = await one(
+    'SELECT 1 FROM blocks WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)',
+    [req.user.id, to],
+  );
+  if (blocked) return bad(res, 'User not found', 404);
+
+  // If they already asked me, sending a request back simply accepts theirs.
+  const reverse = await one(`SELECT * FROM connections WHERE requester_id = $1 AND addressee_id = $2`, [to, req.user.id]);
+  if (reverse && reverse.status !== 'accepted') {
+    await q(`UPDATE connections SET status = 'accepted', updated_at = now() WHERE id = $1`, [reverse.id]);
+    emitTo(to, 'connections', {});
+    return res.json({ status: 'accepted' });
+  }
+  if (reverse) return res.json({ status: 'accepted' });
+
+  const row = await one(
+    `INSERT INTO connections (requester_id, addressee_id) VALUES ($1, $2)
+     ON CONFLICT (requester_id, addressee_id) DO UPDATE
+       SET status = CASE WHEN connections.status = 'accepted' THEN 'accepted' ELSE 'pending' END, updated_at = now()
+     RETURNING status`,
+    [req.user.id, to],
+  );
+  emitTo(to, 'connections', { request: true });
+  if (!isOnline(to)) pushNewMessage(target, 'request');
+  res.json({ status: row.status });
+}));
+
+async function answer(req, res, status) {
+  const row = await one(
+    `UPDATE connections SET status = $3, updated_at = now()
+      WHERE id = $1 AND addressee_id = $2 AND status = 'pending' RETURNING requester_id`,
+    [req.params.id, req.user.id, status],
+  );
+  if (!row) return bad(res, 'Request not found', 404);
+  if (status === 'accepted') emitTo(row.requester_id, 'connections', {});
+  res.json({ ok: true });
+}
+api.post('/connections/:id/accept', requireUser, wrap((req, res) => answer(req, res, 'accepted')));
+api.post('/connections/:id/decline', requireUser, wrap((req, res) => answer(req, res, 'declined')));
+
+api.delete('/connections/:userId', requireUser, wrap(async (req, res) => {
+  await q(
+    `DELETE FROM connections WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
+    [req.user.id, req.params.userId],
+  );
+  emitTo(req.params.userId, 'connections', {});
+  res.json({ ok: true });
+}));
+
+// ---------- block / report ----------
+api.get('/blocks', requireUser, wrap(async (req, res) => {
+  const { rows } = await q(
+    'SELECT u.* FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC',
+    [req.user.id],
+  );
+  res.json({ users: rows.map(publicUser) });
+}));
+
+api.post('/blocks', requireUser, wrap(async (req, res) => {
+  const other = String(req.body.userId || '');
+  await q('INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.user.id, other]);
+  // Blocking wipes pending messages between the two.
+  const { rows } = await q(
+    `DELETE FROM messages WHERE (sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1)
+     RETURNING id, media_key`,
+    [req.user.id, other],
+  );
+  rows.forEach((r) => deleteMedia(r.media_key));
+  emitTo(req.user.id, 'vanished', { ids: rows.map((r) => r.id) });
+  emitTo(other, 'vanished', { ids: rows.map((r) => r.id) });
+  emitTo(other, 'connections', {});
+  res.json({ ok: true });
+}));
+
+api.delete('/blocks/:userId', requireUser, wrap(async (req, res) => {
+  await q('DELETE FROM blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
+  res.json({ ok: true });
+}));
+
+api.post('/reports', requireUser, searchLimit, wrap(async (req, res) => {
+  const reason = String(req.body.reason || '').trim().slice(0, 200);
+  if (!reason) return bad(res, 'Pick a reason');
+  await q('INSERT INTO reports (reporter_id, reported_id, reason, evidence) VALUES ($1,$2,$3,$4)', [
+    req.user.id, req.body.userId, reason, req.body.evidence ? String(req.body.evidence).slice(0, 4000) : null,
+  ]);
+  if (req.body.block) await q('INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.user.id, req.body.userId]);
+  res.json({ ok: true });
+}));
+
+// ---------- messages ----------
+api.get('/messages/sync', requireUser, wrap(async (req, res) => {
+  const { rows } = await q(
+    `SELECT * FROM messages WHERE (sender_id = $1 OR recipient_id = $1) AND expires_at > now()
+      ORDER BY created_at ASC LIMIT 2000`,
+    [req.user.id],
+  );
+  const { rows: reacts } = await q(
+    `SELECT r.* FROM reactions r JOIN messages m ON m.id = r.message_id WHERE m.sender_id = $1 OR m.recipient_id = $1`,
+    [req.user.id],
+  );
+  res.json({
+    messages: rows.map((m) => serializeMessage(m, req.user.id)),
+    reactions: reacts.map((r) => ({ id: r.message_id, userId: r.user_id, emoji: r.emoji })),
+  });
+}));
+
+// ---------- media (encrypted before upload) ----------
+api.post('/media/upload-url', requireUser, wrap(async (req, res) => {
+  try {
+    res.json(await presignUpload(req.user.id, Number(req.body.size)));
+  } catch (e) {
+    bad(res, e.message);
+  }
+}));
+
+api.get('/media/download-url', requireUser, wrap(async (req, res) => {
+  const key = String(req.query.key || '');
+  const msg = await one(
+    'SELECT 1 FROM messages WHERE media_key = $1 AND (sender_id = $2 OR recipient_id = $2)',
+    [key, req.user.id],
+  );
+  if (!msg) return bad(res, 'This photo is gone', 404);
+  res.json({ url: await presignDownload(key) });
+}));
