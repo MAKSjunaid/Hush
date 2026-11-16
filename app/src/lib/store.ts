@@ -499,12 +499,15 @@ export function sendText(peerId: string, body: string, replyTo?: Msg | null) {
   queue(peerId, 'text', { t: 'text', body: text.slice(0, 4000), replyText }, { replyTo: replyTo?.id ?? null });
 }
 
+/** Server-relative links (database photo storage) need the server address on phones. */
+const absUrl = (u: string) => (u.startsWith('/') ? API_URL + u : u);
+
 export async function sendPhoto(peerId: string, bytes: Uint8Array, w?: number, h?: number) {
   const sealedFile = sealBytes(bytes);
   const { key, uploadUrl } = await api<{ key: string; uploadUrl: string }>('/media/upload-url', {
     body: { size: sealedFile.data.length },
   });
-  const put = await fetch(uploadUrl, {
+  const put = await fetch(absUrl(uploadUrl), {
     method: 'PUT',
     headers: { 'content-type': 'application/octet-stream' },
     body: sealedFile.data as any,
@@ -516,7 +519,8 @@ export async function sendPhoto(peerId: string, bytes: Uint8Array, w?: number, h
 export async function fetchPhoto(m: Msg): Promise<Uint8Array | null> {
   if (m.payload?.t !== 'photo' || !m.mediaKey) return null;
   const { url } = await api<{ url: string }>(`/media/download-url?key=${encodeURIComponent(m.mediaKey)}`);
-  const res = await fetch(url);
+  const res = await fetch(absUrl(url));
+  if (!res.ok) throw new Error(res.status === 404 ? 'This photo is gone' : 'Could not load photo');
   const buf = new Uint8Array(await res.arrayBuffer());
   const { openBytes } = await import('./crypto');
   return openBytes(buf, m.payload.key, m.payload.nonce);
