@@ -223,20 +223,6 @@ export default function Chat() {
           <IconButton icon="ellipsis-vertical" label="More options" color={c.muted} onPress={() => setSheet('more')} />
         </View>
 
-        {/* Encryption notice, pinned at the top of the chat and centered. */}
-        <View style={{ alignSelf: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14, backgroundColor: c.surface2, marginHorizontal: 16, marginTop: 10, maxWidth: 440 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Ionicons name="lock-closed" size={13} color={c.accentText} />
-            <T variant="label" color={c.accentText}>End-to-end encrypted</T>
-          </View>
-          <T variant="small" style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
-            Private conversations between just the two of you. Messages disappear once seen — once a message is viewed it cannot be recovered or restored. No permanent chat history.{isWeb ? ' Browsers can’t block screenshots.' : ' Screenshots are blocked.'}
-          </T>
-          <T variant="small" color={c.muted} style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
-            Be respectful and considerate of each other. Messages are temporary, so read attentively and think before you send. Communicate openly, protect each other’s privacy, and treat every conversation with care.
-          </T>
-        </View>
-
         {/* messages */}
         <FlatList
           inverted
@@ -244,6 +230,22 @@ export default function Chat() {
           keyExtractor={(m) => m.id}
           contentContainerStyle={{ padding: 16, gap: 8 }}
           keyboardShouldPersistTaps="handled"
+          ListFooterComponent={
+            // Inverted list: the footer sits at the very top of the conversation and scrolls away as
+            // messages fill in. Centered.
+            <View style={{ alignSelf: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14, backgroundColor: c.surface2, marginTop: 4, marginBottom: 14, maxWidth: 440 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="lock-closed" size={13} color={c.accentText} />
+                <T variant="label" color={c.accentText}>End-to-end encrypted</T>
+              </View>
+              <T variant="small" style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
+                Private conversations between just the two of you. Messages disappear once seen — once a message is viewed it cannot be recovered or restored. No permanent chat history.{isWeb ? ' Browsers can’t block screenshots.' : ' Screenshots are blocked.'}
+              </T>
+              <T variant="small" color={c.muted} style={{ fontSize: 12.5, lineHeight: 18, textAlign: 'center' }}>
+                Be respectful and considerate of each other. Messages are temporary, so read attentively and think before you send. Communicate openly, protect each other’s privacy, and treat every conversation with care.
+              </T>
+            </View>
+          }
           renderItem={({ item, index }) => {
             const newer = list[index - 1];
             const showMeta = !newer || newer.mine !== item.mine || newer.kind !== item.kind ||
