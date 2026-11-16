@@ -156,6 +156,40 @@ api.post('/me/password', requireUser, authLimit, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------- profile picture ----------
+// The phone resizes the image to a small square JPEG before upload. Avatars aren't message
+// content (any contact can see them, like your name), so they're stored plainly, one per user.
+const AVATAR_MAX_BYTES = 400 * 1024;
+api.put('/me/avatar', requireUser, express.raw({ type: () => true, limit: AVATAR_MAX_BYTES }), wrap(async (req, res) => {
+  const buf = req.body;
+  if (!buf?.length) return bad(res, 'No image');
+  if (buf.length > AVATAR_MAX_BYTES) return bad(res, 'Image too large', 413);
+  await q(
+    `INSERT INTO avatars (user_id, data, mime, updated_at) VALUES ($1, $2, 'image/jpeg', now())
+     ON CONFLICT (user_id) DO UPDATE SET data = EXCLUDED.data, mime = EXCLUDED.mime, updated_at = now()`,
+    [req.user.id, buf],
+  );
+  const user = await one('UPDATE users SET avatar_at = now() WHERE id = $1 RETURNING *', [req.user.id]);
+  cacheUser(user);
+  res.json({ user: selfUser(user) });
+}));
+
+api.delete('/me/avatar', requireUser, wrap(async (req, res) => {
+  await q('DELETE FROM avatars WHERE user_id = $1', [req.user.id]);
+  const user = await one('UPDATE users SET avatar_at = NULL WHERE id = $1 RETURNING *', [req.user.id]);
+  cacheUser(user);
+  res.json({ user: selfUser(user) });
+}));
+
+// Public: a contact's <Image> loads this by URL. The ?v=<timestamp> makes each version
+// immutably cacheable, so updating a photo busts the cache without a no-store penalty.
+api.get('/avatar/:userId', wrap(async (req, res) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.userId)) return bad(res, 'Not found', 404);
+  const row = await one('SELECT data, mime FROM avatars WHERE user_id = $1', [req.params.userId]);
+  if (!row) return bad(res, 'No photo', 404);
+  res.set({ 'Content-Type': row.mime || 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' }).send(row.data);
+}));
+
 api.post('/me/push-token', requireUser, wrap(async (req, res) => {
   const token = req.body.token ? String(req.body.token).slice(0, 200) : null;
   if (token !== req.user.push_token) {
@@ -187,7 +221,7 @@ api.get('/users/search', requireUser, searchLimit, wrap(async (req, res) => {
   const term = normalizeUsername(req.query.q).replace(/[%_\\]/g, '');
   if (term.length < 3) return res.json({ users: [] });
   const { rows } = await q(
-    `SELECT u.id, u.username, u.display_name, u.public_key, c.status AS conn_status, c.requester_id
+    `SELECT u.id, u.username, u.display_name, u.public_key, u.avatar_at, c.status AS conn_status, c.requester_id
        FROM users u
        LEFT JOIN connections c ON (c.requester_id = $1 AND c.addressee_id = u.id) OR (c.addressee_id = $1 AND c.requester_id = u.id)
       WHERE lower(u.username) LIKE $2 AND u.id <> $1 AND u.status = 'active'
@@ -209,7 +243,7 @@ api.get('/users/search', requireUser, searchLimit, wrap(async (req, res) => {
 
 api.get('/connections', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
-    `SELECT u.id, u.username, u.display_name, u.public_key, u.settings, u.last_active_at, c.id AS connection_id, c.status AS conn_status, c.requester_id, c.created_at AS since
+    `SELECT u.id, u.username, u.display_name, u.public_key, u.avatar_at, u.settings, u.last_active_at, c.id AS connection_id, c.status AS conn_status, c.requester_id, c.created_at AS since
        FROM connections c
        JOIN users u ON u.id = CASE WHEN c.requester_id = $1 THEN c.addressee_id ELSE c.requester_id END
       WHERE (c.requester_id = $1 OR c.addressee_id = $1) AND c.status IN ('pending','accepted')
@@ -311,7 +345,7 @@ api.delete('/messages/with/:userId', requireUser, wrap(async (req, res) => {
 // ---------- block / report ----------
 api.get('/blocks', requireUser, wrap(async (req, res) => {
   const { rows } = await q(
-    'SELECT u.id, u.username, u.display_name, u.public_key FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC',
+    'SELECT u.id, u.username, u.display_name, u.public_key, u.avatar_at FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC',
     [req.user.id],
   );
   res.json({ users: rows.map(publicUser) });
