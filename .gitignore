@@ -1,0 +1,14 @@
+node_modules/
+.env
+*.env.local
+server/public/web/
+server/public/downloads/*.apk
+app/.expo/
+app/dist/
+app/web-build/
+app/android/
+app/ios/
+.idea/workspace.xml
+.idea/shelf/
+*.log
+.DS_Store
