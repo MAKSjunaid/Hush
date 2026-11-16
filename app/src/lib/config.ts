@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * Where the Hush server lives.
+ * Where the HushChat server lives.
  * - Web: the same address the page was opened from (the server hosts the web app), unless overridden.
  * - Phone: EXPO_PUBLIC_API_URL (from app/.env) or "extra.apiUrl" in app.json.
  */

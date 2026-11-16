@@ -33,8 +33,8 @@ export const darkPalette: Palette = {
   surface2: '#131419',
   border: '#2A2B33',
   text: '#F2F1EE',
-  muted: '#A8A8B3',
-  faint: '#93939E',
+  muted: '#9A9AA5',
+  faint: '#85858F',
   accent: '#8B7CFF',
   onAccent: '#0B0B0F',
   accentSoft: '#221E3D',
@@ -64,7 +64,7 @@ export const lightPalette: Palette = {
   accentSoft: '#ECE9FF',
   accentText: '#5242C9',
   bubbleIn: '#FFFFFF',
-  bubbleOut: '#5A42F0',
+  bubbleOut: '#6A5AE0',
   onBubbleOut: '#FFFFFF',
   success: '#13795B',
   warn: '#9A5B00',
@@ -84,12 +84,12 @@ export const fonts = {
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-type Ctx = { c: Palette; mode: ThemeMode; isDark: boolean; setMode: (m: ThemeMode) => void };
-const ThemeCtx = createContext<Ctx>({ c: darkPalette, mode: 'dark', isDark: true, setMode: () => {} });
+type Ctx = { c: Palette; mode: ThemeMode; setMode: (m: ThemeMode) => void };
+const ThemeCtx = createContext<Ctx>({ c: darkPalette, mode: 'system', setMode: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const system = useColorScheme();
-  const [mode, setModeState] = useState<ThemeMode>('dark');
+  const [mode, setModeState] = useState<ThemeMode>('system');
 
   useEffect(() => {
     AsyncStorage.getItem('hush.theme').then((v) => {
@@ -102,7 +102,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return {
       c: isDark ? darkPalette : lightPalette,
       mode,
-      isDark,
       setMode: (m) => {
         setModeState(m);
         AsyncStorage.setItem('hush.theme', m);

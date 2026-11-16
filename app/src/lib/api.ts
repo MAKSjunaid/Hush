@@ -27,7 +27,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
   } catch {
-    throw new ApiError("Can't reach Hush. Check your internet connection.", 0, null);
+    throw new ApiError("Can't reach HushChat. Check your internet connection.", 0, null);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error || 'Something went wrong', res.status, data);

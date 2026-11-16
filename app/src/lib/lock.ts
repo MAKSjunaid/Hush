@@ -37,7 +37,7 @@ export async function setBiometricPref(on: boolean) {
   await setSecret(BIO_KEY, on ? '1' : null);
 }
 
-/** Seconds in the background before Hush locks again (0 = immediately). */
+/** Seconds in the background before HushChat locks again (0 = immediately). */
 export async function getLockDelay() {
   return Number((await getSecret(DELAY_KEY)) ?? '0');
 }
@@ -48,7 +48,7 @@ export async function setLockDelay(s: number) {
 
 export async function unlockWithBiometrics() {
   const r = await LocalAuthentication.authenticateAsync({
-    promptMessage: 'Unlock Hush',
+    promptMessage: 'Unlock HushChat',
     cancelLabel: 'Use PIN',
     disableDeviceFallback: true,
   });

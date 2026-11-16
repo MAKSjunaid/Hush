@@ -17,7 +17,7 @@ export type Settings = {
   discoverable?: boolean;
   notifications?: boolean;
 };
-export type User = { id: string; username: string; displayName: string; publicKey: string | null };
+export type User = { id: string; username: string; displayName: string; publicKey: string | null; avatarAt?: string | null };
 export type Me = User & { settings: Settings; usernameChangedAt?: string | null };
 export type Peer = User & { online?: boolean; lastSeen?: string | null };
 export type Conn = { connectionId: string; since: string; user: Peer };
@@ -275,7 +275,7 @@ function connectSocket() {
   });
   socket.on('connections', () => refreshConnections());
   socket.on('announcement', (a) => set((s) => ({ config: s.config ? { ...s.config, announcement: a } : s.config })));
-  socket.on('session_replaced', () => endSession('You logged in on another device. Hush works on one device at a time.'));
+  socket.on('session_replaced', () => endSession('You logged in on another device. HushChat works on one device at a time.'));
   socket.on('account_suspended', () => endSession('Your account has been suspended.'));
   socket.on('account_banned', () => endSession('Your account has been banned.'));
   socket.on('account_deleted', () => endSession(null));
@@ -420,6 +420,55 @@ export async function updateMe(patch: { displayName?: string; settings?: Setting
   const { user } = await api<{ user: Me }>('/me', { method: 'PATCH', body: patch });
   set({ me: user });
   AsyncStorage.setItem('hush.me', JSON.stringify(user));
+}
+
+function saveMe(user: Me) {
+  set({ me: user });
+  AsyncStorage.setItem('hush.me', JSON.stringify(user));
+}
+
+/** Change username. Connections are keyed by user id, so your contacts and chats are untouched. */
+export async function changeUsername(username: string) {
+  const { user } = await api<{ user: Me }>('/me/username', { body: { username: username.trim().replace(/^@/, '') } });
+  clearApiCache('/users/search');
+  clearApiCache('/auth/username-available');
+  saveMe(user);
+}
+
+/** Change password. The server keeps your session (same device), so you stay logged in. */
+export async function changePassword(currentPassword: string, newPassword: string) {
+  await api('/me/password', { body: { currentPassword, newPassword } });
+}
+
+/** The public URL for a user's photo, or null. ?v=<timestamp> makes each version cacheable. */
+export function avatarUrl(user?: { id: string; avatarAt?: string | null } | null): string | null {
+  if (!user?.avatarAt) return null;
+  return `${API_URL}/api/avatar/${user.id}?v=${Date.parse(user.avatarAt) || 0}`;
+}
+
+/** Resize a picked image to a small square JPEG and upload it as the profile photo. */
+export async function setAvatar(uri: string) {
+  const ImageManipulator = await import('expo-image-manipulator');
+  const out = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 256, height: 256 } }],
+    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+  );
+  if (!out.base64) throw new Error('Could not process image');
+  const bytes = decodeBase64(out.base64);
+  const res = await fetch(`${API_URL}/api/me/avatar`, {
+    method: 'PUT',
+    headers: { 'content-type': 'image/jpeg', ...(state.token ? { authorization: `Bearer ${state.token}` } : {}) },
+    body: bytes as any,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Could not upload photo');
+  saveMe(data.user);
+}
+
+export async function removeAvatar() {
+  const { user } = await api<{ user: Me }>('/me/avatar', { method: 'DELETE' });
+  saveMe(user);
 }
 
 // ---------- connections ----------
