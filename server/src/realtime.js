@@ -160,6 +160,7 @@ const editLimit = rateLimiter(30, 60_000);
 // Read-and-deleted text messages, kept in memory only for the longest possible edit window (capped size).
 const recentlySeen = registerCache(new TTLCache({ ttlMs: 24 * 3600_000, max: 50_000 }));
 const eventLimit = rateLimiter(60, 10_000);
+const typingTextLimit = rateLimiter(40, 10_000);
 
 // Who might have undelivered messages: anyone a message was queued for, plus everyone once after a restart.
 const pendingFor = new Set();
@@ -375,6 +376,13 @@ export function attachRealtime(httpServer) {
 
     socket.on('typing', guard(async (p) => {
       if (await canMessage(userId, p.to)) emitTo(p.to, 'typing', { from: userId, on: Boolean(p.on) });
+    }));
+
+    // Live typing preview: relay the encrypted draft to the other person, never stored.
+    socket.on('typing_text', guard(async (p) => {
+      if (!typingTextLimit(userId)) return;
+      if (typeof p.ciphertext !== 'string' || p.ciphertext.length > 2000 || typeof p.nonce !== 'string') return;
+      if (await canMessage(userId, p.to)) emitTo(p.to, 'typing_text', { from: userId, ciphertext: p.ciphertext, nonce: p.nonce });
     }));
 
     // Screenshot / screen-recording attempts become a line in the chat for both people.
