@@ -281,9 +281,18 @@ export default function Chat() {
         ) : null}
 
         {err ? (
-          <Pressable onPress={() => setErr(null)} style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 12, backgroundColor: c.dangerSoft }}>
-            <T variant="small" color={c.danger}>{err}</T>
-          </Pressable>
+          <View style={{ marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 12, backgroundColor: c.dangerSoft, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <T variant="small" color={c.danger} style={{ flex: 1 }}>{err}</T>
+            <Pressable
+              onPress={() => setErr(null)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+              style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: c.danger, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name="close" size={14} color={c.danger} />
+            </Pressable>
+          </View>
         ) : null}
 
         {/* editing bar */}
