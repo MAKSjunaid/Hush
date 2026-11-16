@@ -204,13 +204,18 @@ function connectSocket() {
   });
   socket.on('seen', ({ id, vanishing, expiresAt }) => {
     if (vanishing) {
-      patchMsg(id, { status: 'seen', vanishing: true });
-      setTimeout(() => removeIds([id]), 3500);
+      // Gone from the server already, but stays on your screen until you leave this chat.
+      patchMsg(id, { status: 'seen', vanishing: true, readLocally: true });
     } else {
       patchMsg(id, { status: 'seen', seenAt: new Date().toISOString(), expiresAt });
     }
   });
-  socket.on('vanished', ({ ids }) => removeIds(ids));
+  socket.on('vanished', ({ ids }: { ids: string[] }) => {
+    // Timer ran out. If that chat is open right now, keep showing it until you leave.
+    const keep = ids.filter((id) => { const m = state.messages[id]; return m && openChat && peerOf(m) === openChat; });
+    keep.forEach((id) => patchMsg(id, { vanishing: true, readLocally: true, expiresAt: null }));
+    removeIds(ids.filter((id) => !keep.includes(id)));
+  });
   socket.on('reaction', ({ id, userId, emoji }) => {
     const m = state.messages[id];
     if (!m) return;
@@ -534,6 +539,12 @@ export function markSeen(ids: string[]) {
     if (m.timer == null) patchMsg(id, { readLocally: true, seenAt: new Date().toISOString() });
   });
   socket.emit('seen', { ids: fresh });
+}
+
+/** The chat currently on screen (messages there never disappear while you're looking at them). */
+let openChat: string | null = null;
+export function setOpenChat(peerId: string | null) {
+  openChat = peerId;
 }
 
 /** Leaving a chat clears what you've already read. */
