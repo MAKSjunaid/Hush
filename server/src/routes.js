@@ -58,42 +58,49 @@ api.post('/auth/signup', authLimit, wrap(async (req, res) => {
   if (!validKey(publicKey)) return bad(res, 'Missing encryption key');
 
   const recoveryKey = newRecoveryKey();
+  const keyBackup = req.body.keyBackup ? JSON.stringify(req.body.keyBackup) : null;
   try {
     const user = await one(
-      `INSERT INTO users (username, display_name, password_hash, recovery_hash, public_key)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [username, displayName, await hash(password), await hash(recoveryKey), publicKey],
+      `INSERT INTO users (username, display_name, password_hash, recovery_hash, public_key, key_backup)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [username, displayName, await hash(password), await hash(recoveryKey), publicKey, keyBackup],
     );
     bumpStat('signups');
     cacheUser(user);
-    res.json({ token: signToken(user), user: selfUser(user), recoveryKey });
+    res.json({ token: signToken(user), user: selfUser(user), recoveryKey, keyBackup: user.key_backup || null });
   } catch (e) {
     if (e.code === '23505') return bad(res, 'That username was just taken', 409);
     throw e;
   }
 }));
 
-async function startSession(user, publicKey) {
-  // One active device per account: a new login replaces the old device and its key.
+// Bump the session (one active device) without disturbing the account's keypair backup.
+// public_key / key_backup are only written when provided (first backup or a legacy device), via COALESCE.
+async function startSession(user, { publicKey = null, keyBackup = null, replaceKeys = false } = {}) {
   kickUser(user.id, 'session_replaced');
-  return cacheUser(await one(
-    `UPDATE users SET token_version = token_version + 1, public_key = $2, push_token = NULL, last_active_at = now()
-      WHERE id = $1 RETURNING *`,
-    [user.id, publicKey],
-  ));
+  const sql = replaceKeys
+    ? `UPDATE users SET token_version = token_version + 1, public_key = $2, key_backup = $3, push_token = NULL, last_active_at = now() WHERE id = $1 RETURNING *`
+    : `UPDATE users SET token_version = token_version + 1, public_key = COALESCE($2, public_key), key_backup = COALESCE($3, key_backup), push_token = NULL, last_active_at = now() WHERE id = $1 RETURNING *`;
+  return cacheUser(await one(sql, [user.id, publicKey, keyBackup ? JSON.stringify(keyBackup) : null]));
 }
 
 api.post('/auth/login', authLimit, wrap(async (req, res) => {
   const username = normalizeUsername(req.body.username);
-  const { password, publicKey } = req.body;
-  if (!validKey(publicKey)) return bad(res, 'Missing encryption key');
+  const { password } = req.body;
   const user = await one('SELECT * FROM users WHERE lower(username) = $1', [username]);
   if (!user || !(await compare(String(password || ''), user.password_hash))) {
     return bad(res, 'Wrong username or password', 401);
   }
   if (user.status !== 'active') return bad(res, `This account is ${user.status}`, 403);
-  const fresh = await startSession(user, publicKey);
-  res.json({ token: signToken(fresh), user: selfUser(fresh) });
+  // If the account already has a key backup, the device key comes from it — keep public_key as-is.
+  // Otherwise (first backup or a legacy device), store what the client offers.
+  let publicKey = null, keyBackup = null;
+  if (!user.key_backup) {
+    if (validKey(req.body.publicKey)) publicKey = req.body.publicKey;
+    if (req.body.keyBackup) keyBackup = req.body.keyBackup;
+  }
+  const fresh = await startSession(user, { publicKey, keyBackup });
+  res.json({ token: signToken(fresh), user: selfUser(fresh), keyBackup: fresh.key_backup || null });
 }));
 
 api.post('/auth/recover', authLimit, wrap(async (req, res) => {
@@ -107,8 +114,9 @@ api.post('/auth/recover', authLimit, wrap(async (req, res) => {
   if (!user || !(await compare(key, user.recovery_hash))) return bad(res, 'Username or recovery key is wrong', 401);
   if (user.status !== 'active') return bad(res, `This account is ${user.status}`, 403);
   await q('UPDATE users SET password_hash = $2 WHERE id = $1', [user.id, await hash(newPassword)]);
-  const fresh = await startSession(user, publicKey);
-  res.json({ token: signToken(fresh), user: selfUser(fresh) });
+  // Password reset: the client re-wraps its key (same key if it still has it, else a new one).
+  const fresh = await startSession(user, { publicKey, keyBackup: req.body.keyBackup || null, replaceKeys: true });
+  res.json({ token: signToken(fresh), user: selfUser(fresh), keyBackup: fresh.key_backup || null });
 }));
 
 // ---------- me ----------
@@ -151,8 +159,21 @@ api.post('/me/password', requireUser, authLimit, wrap(async (req, res) => {
   if (!(await compare(String(req.body.currentPassword || ''), req.user.password_hash))) return bad(res, 'Current password is wrong', 401);
   const pErr = validatePassword(req.body.newPassword);
   if (pErr) return bad(res, pErr);
-  await q('UPDATE users SET password_hash = $2 WHERE id = $1', [req.user.id, await hash(req.body.newPassword)]);
+  // The client re-wraps the SAME keypair under the new password, so message history is preserved.
+  const keyBackup = req.body.keyBackup ? JSON.stringify(req.body.keyBackup) : null;
+  await q('UPDATE users SET password_hash = $2, key_backup = COALESCE($3, key_backup) WHERE id = $1',
+    [req.user.id, await hash(req.body.newPassword), keyBackup]);
   forgetUser(req.user.id);
+  res.json({ ok: true });
+}));
+
+// First-time key backup registration (legacy account, or a device that had no backup to restore).
+// Only writes when none exists yet, so it can never silently rotate an established key.
+api.post('/me/key-backup', requireUser, wrap(async (req, res) => {
+  if (req.user.key_backup) return res.json({ ok: true, alreadySet: true });
+  if (!validKey(req.body.publicKey) || !req.body.keyBackup) return bad(res, 'Missing key');
+  cacheUser(await one('UPDATE users SET public_key = $2, key_backup = $3 WHERE id = $1 RETURNING *',
+    [req.user.id, req.body.publicKey, JSON.stringify(req.body.keyBackup)]));
   res.json({ ok: true });
 }));
 

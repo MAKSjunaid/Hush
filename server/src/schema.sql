@@ -132,6 +132,10 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at timestamptz;
 -- user row (NULL = none) lets us expose "has a photo, changed at T" for cache-busting without ever
 -- loading the bytes in the common SELECT * user queries.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_at timestamptz;
+
+-- Device keypair, encrypted with a key derived from the user's password. Lets any device (or a
+-- re-login after a browser clears local storage) restore the SAME keypair, so messages never orphan.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS key_backup jsonb;
 CREATE TABLE IF NOT EXISTS avatars (
   user_id     uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   data        bytea NOT NULL,
