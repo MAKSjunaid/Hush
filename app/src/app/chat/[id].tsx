@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Avatar, Button, IconButton, Row, Sheet, T, tap } from '@/components/ui';
 import { fonts, useTheme } from '@/lib/theme';
 import {
-  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping,
+  Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping,
   reportScreenshot, setChatTimer, blockUser, report, removeContact, getState, decodeBase64,
 } from '@/lib/store';
 import { encodeBase64, safetyCode } from '@/lib/crypto';
@@ -37,11 +37,12 @@ export default function Chat() {
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Msg | null>(null);
   const [menuFor, setMenuFor] = useState<Msg | null>(null);
-  const [sheet, setSheet] = useState<null | 'timer' | 'more' | 'report' | 'safety'>(null);
+  const [sheet, setSheet] = useState<null | 'timer' | 'more' | 'report' | 'safety' | 'delete'>(null);
   const [reportMsg, setReportMsg] = useState<Msg | null>(null);
   const [viewer, setViewer] = useState<{ msg: Msg; uri: string | null; loading: boolean; error?: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Msg | null>(null);
   const [, tick] = useState(0);
   const appActive = useRef(AppState.currentState === 'active');
 
@@ -111,6 +112,14 @@ export default function Chat() {
 
   const send = () => {
     if (!text.trim()) return;
+    if (editing) {
+      const m = editing;
+      setEditing(null);
+      setText('');
+      sendTyping(peerId, false);
+      editMessage(m, text).catch((e) => setErr(e.message));
+      return;
+    }
     try {
       sendText(peerId, text, replyTo);
       setText('');
@@ -234,6 +243,18 @@ export default function Chat() {
           </Pressable>
         ) : null}
 
+        {/* editing bar */}
+        {editing ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, padding: 10, paddingLeft: 14, borderRadius: 12, backgroundColor: c.surface2 }}>
+            <Ionicons name="create-outline" size={18} color={c.accentText} />
+            <View style={{ flex: 1 }}>
+              <T variant="label" color={c.accentText}>Editing message</T>
+              <T variant="small" numberOfLines={1}>{editing.payload?.t === 'text' ? editing.payload.body : ''}</T>
+            </View>
+            <IconButton icon="close" label="Cancel editing" size={18} color={c.muted} onPress={() => { setEditing(null); setText(''); }} />
+          </View>
+        ) : null}
+
         {/* reply preview */}
         {replyTo ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 12, padding: 10, paddingLeft: 14, borderRadius: 12, backgroundColor: c.surface2 }}>
@@ -316,6 +337,9 @@ export default function Chat() {
         {menuFor?.payload?.t === 'text' ? (
           <Row icon="copy-outline" label="Copy text" onPress={() => { Clipboard.setStringAsync((menuFor.payload as any).body); setMenuFor(null); }} />
         ) : null}
+        {menuFor && canEdit(menuFor) ? (
+          <Row icon="create-outline" label="Edit" onPress={() => { setReplyTo(null); setEditing(menuFor); setText((menuFor.payload as any).body); setMenuFor(null); }} />
+        ) : null}
         {menuFor?.status === 'failed' ? <Row icon="refresh" label="Try sending again" onPress={() => { retry(menuFor); setMenuFor(null); }} /> : null}
         {menuFor?.mine && menuFor.kind !== 'screenshot' ? (
           <Row icon="trash-outline" label="Delete for everyone" danger onPress={() => { unsend(menuFor); setMenuFor(null); }} />
@@ -351,8 +375,29 @@ export default function Chat() {
       <Sheet visible={sheet === 'more'} onClose={() => setSheet(null)} title={`@${peer.username}`}>
         <Row icon="shield-checkmark-outline" label="Verify safety code" sub="Make sure nobody is in the middle" onPress={() => setSheet('safety')} />
         <Row icon="flag-outline" label="Report" onPress={() => { setReportMsg(null); setSheet('report'); }} />
+        <Row icon="trash-outline" label="Delete chat" sub="Clears all messages for both of you" danger onPress={() => setSheet('delete')} />
         <Row icon="person-remove-outline" label="Remove from chats" onPress={async () => { setSheet(null); await removeContact(peerId); router.replace('/chats'); }} />
         <Row icon="ban-outline" label={`Block @${peer.username}`} danger onPress={async () => { setSheet(null); await blockUser(peerId); router.replace('/chats'); }} />
+      </Sheet>
+
+      {/* delete chat */}
+      <Sheet visible={sheet === 'delete'} onClose={() => setSheet(null)} title="Delete this chat?">
+        <T variant="small">Every message in this chat will be deleted for you and @{peer.username}. This can't be undone. You'll still be connected.</T>
+        <View style={{ gap: 10, marginTop: 14 }}>
+          <Button
+            title="Delete for both"
+            variant="danger"
+            onPress={async () => {
+              setSheet(null);
+              try {
+                await deleteChat(peerId);
+              } catch (e: any) {
+                setErr(e.message || 'Could not delete chat');
+              }
+            }}
+          />
+          <Button title="Cancel" variant="secondary" onPress={() => setSheet(null)} />
+        </View>
       </Sheet>
 
       {/* safety code */}
@@ -479,14 +524,14 @@ function MessageItem({
           {reactions.map((r, i) => <T key={i} style={{ fontSize: 14 }}>{r}</T>)}
         </View>
       ) : null}
-      {mine && (showMeta || m.status === 'failed' || m.vanishing) ? (
+      {mine && (showMeta || m.status === 'failed' || m.vanishing || m.editedAt) ? (
         <T variant="small" style={{ fontSize: 11 }} color={m.status === 'failed' ? c.danger : c.faint}>
-          {status}{m.status !== 'sending' && m.status !== 'failed' ? ` · ${clock(m.createdAt)}` : ''}
+          {m.editedAt ? 'Edited · ' : ''}{status}{m.status !== 'sending' && m.status !== 'failed' ? ` · ${clock(m.createdAt)}` : ''}
         </T>
       ) : null}
-      {!mine && (showMeta || incomingTimed) ? (
+      {!mine && (showMeta || incomingTimed || m.editedAt) ? (
         <T variant="small" style={{ fontSize: 11 }} color={c.faint}>
-          {clock(m.createdAt)}{incomingTimed ? ` · vanishes in ${countdown(m.expiresAt)}` : ''}
+          {m.editedAt ? 'Edited · ' : ''}{clock(m.createdAt)}{incomingTimed ? ` · vanishes in ${countdown(m.expiresAt)}` : ''}
         </T>
       ) : null}
     </View>
