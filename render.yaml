@@ -5,7 +5,7 @@ services:
     runtime: node
     region: singapore
     plan: free            # switch to "starter" ($7/mo) so it never sleeps
-    buildCommand: cd app && npm ci && npm run build:web && cd ../server && npm ci --omit=dev
+    buildCommand: cd app && npm install && npm run build:web && cd ../server && npm install --omit=dev
     startCommand: cd server && npm start
     healthCheckPath: /health
     envVars:
