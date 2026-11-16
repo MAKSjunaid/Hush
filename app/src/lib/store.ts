@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { io, Socket } from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
-import { api, setApiToken } from './api';
+import { api, apiCached, clearApiCache, setApiToken } from './api';
 import { API_URL } from './config';
 import { getSecret, setSecret } from './secure';
 import {
@@ -314,12 +314,12 @@ export async function init() {
 
 export async function loadConfig() {
   try {
-    set({ config: await api<AppConfig>('/config') });
+    set({ config: await apiCached<AppConfig>('/config', 5 * 60_000) });
   } catch {}
 }
 
 export async function checkUsername(u: string) {
-  return api<{ available: boolean; reason: string | null }>(`/auth/username-available?u=${encodeURIComponent(u)}`);
+  return apiCached<{ available: boolean; reason: string | null }>(`/auth/username-available?u=${encodeURIComponent(u)}`, 15_000);
 }
 
 export async function signup(username: string, displayName: string, password: string) {
@@ -356,6 +356,7 @@ async function wipeLocal() {
   await setSecret('hush.token', null);
   await clearKeyPair();
   await AsyncStorage.multiRemove(['hush.me', 'hush.timers']);
+  clearApiCache();
   set({ token: null, me: null, keys: null, contacts: [], incoming: [], outgoing: [], messages: {}, typing: {}, connected: false });
 }
 
@@ -375,25 +376,46 @@ export async function deleteAccount(password: string) {
 }
 
 export async function updateMe(patch: { displayName?: string; settings?: Settings }) {
+  const cur = state.me;
+  if (cur && (patch.displayName == null || patch.displayName === cur.displayName) &&
+    (!patch.settings || JSON.stringify({ ...cur.settings, ...patch.settings }) === JSON.stringify(cur.settings))) return;
   const { user } = await api<{ user: Me }>('/me', { method: 'PATCH', body: patch });
   set({ me: user });
   AsyncStorage.setItem('hush.me', JSON.stringify(user));
 }
 
 // ---------- connections ----------
-export async function refreshConnections() {
-  const d = await api<{ contacts: Conn[]; incoming: Conn[]; outgoing: Conn[] }>('/connections');
-  set({ contacts: d.contacts, incoming: d.incoming, outgoing: d.outgoing });
+// Several "connections changed" events in a row become a single request.
+let connTimer: ReturnType<typeof setTimeout> | null = null;
+let connWaiters: (() => void)[] = [];
+export function refreshConnections(): Promise<void> {
+  return new Promise((resolve) => {
+    connWaiters.push(resolve);
+    if (connTimer) clearTimeout(connTimer);
+    connTimer = setTimeout(async () => {
+      connTimer = null;
+      const waiters = connWaiters;
+      connWaiters = [];
+      try {
+        const d = await api<{ contacts: Conn[]; incoming: Conn[]; outgoing: Conn[] }>('/connections');
+        set({ contacts: d.contacts, incoming: d.incoming, outgoing: d.outgoing });
+        clearApiCache('/users/search');
+      } catch {}
+      waiters.forEach((w) => w());
+    }, 150);
+  });
 }
 
 export async function searchUsers(q: string) {
-  return (await api<{ users: (User & { connection: { status: string; outgoing: boolean } | null })[] }>(
+  return (await apiCached<{ users: (User & { connection: { status: string; outgoing: boolean } | null })[] }>(
     `/users/search?q=${encodeURIComponent(q)}`,
+    20_000,
   )).users;
 }
 
 export async function requestChat(userId: string) {
   const r = await api<{ status: string }>('/connections/request', { body: { userId } });
+  clearApiCache('/users/search');
   refreshConnections();
   return r.status;
 }
