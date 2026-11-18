@@ -17,10 +17,11 @@ if (webPushEnabled()) {
  */
 export async function sendWebPush(recipient, kind = 'text') {
   if (!webPushEnabled()) return;
-  if (recipient.settings?.notifications === false) return;
+  // Calls ring even if ordinary message notifications are muted — they're time-sensitive.
+  if (kind !== 'call' && recipient.settings?.notifications === false) return;
   const { rows } = await q('SELECT endpoint, sub FROM web_push_subs WHERE user_id = $1', [recipient.id]);
   if (!rows.length) return;
-  const body = kind === 'request' ? 'Someone wants to chat with you' : 'New message';
+  const body = kind === 'call' ? 'Incoming voice call' : kind === 'request' ? 'Someone wants to chat with you' : 'New message';
   const payload = JSON.stringify({ title: 'HushChat', body, type: kind });
   await Promise.all(rows.map(async (r) => {
     try {

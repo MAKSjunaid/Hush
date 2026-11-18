@@ -120,11 +120,11 @@ export default function Signup() {
             error={mismatch ? "Passwords don't match" : null}
           />
 
-          <Notice icon="lock-closed-outline" text="Messages vanish for both of you once they're seen. Screenshots come out black, and the other person is told." />
           {error ? <T variant="small" color={c.danger}>{error}</T> : null}
         </ScrollView>
-        <View style={{ paddingBottom: 12 }}>
+        <View style={{ gap: 12, paddingBottom: 12 }}>
           <Button title="Create account" onPress={submit} disabled={!canSubmit} loading={loading} />
+          <Notice icon="lock-closed-outline" text="Messages vanish for both of you once they're seen. Screenshots come out black, and the other person is told." />
         </View>
       </KeyboardAvoidingView>
     </Screen>

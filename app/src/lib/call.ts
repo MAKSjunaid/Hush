@@ -34,8 +34,27 @@ let pendingOffer: string | null = null; // incoming offer sdp, applied on accept
 let iceBuffer: string[] = [];
 let ringTimeout: any = null;
 let remoteAudio: HTMLAudioElement | null = null;
+let wakeLock: any = null;
 
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+async function acquireWake() {
+  try {
+    if (typeof navigator !== 'undefined' && (navigator as any).wakeLock) {
+      wakeLock = await (navigator as any).wakeLock.request('screen');
+    }
+  } catch {}
+}
+function releaseWake() {
+  try { wakeLock?.release?.(); } catch {}
+  wakeLock = null;
+}
+// Wake locks drop when the tab is hidden; re-acquire when it comes back while a call is live.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (state.status === 'active' || state.status === 'connecting' || state.status === 'outgoing')) acquireWake();
+  });
+}
 
 function playRemote(stream: MediaStream) {
   if (typeof document === 'undefined') return;
@@ -61,6 +80,7 @@ function applySpeaker() {
 
 function cleanup() {
   if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
+  releaseWake();
   try { voice?.close(); } catch {}
   voice = null;
   callId = null;
@@ -101,6 +121,7 @@ export async function placeCall(peer: User): Promise<void> {
   peerId = peer.id;
   callId = newId();
   set({ status: 'outgoing', peer, muted: false, speaker: false, startedAt: null, endedReason: null });
+  acquireWake();
   try {
     voice = makeVoice();
     await voice.startMic();
@@ -117,6 +138,7 @@ export async function placeCall(peer: User): Promise<void> {
 export async function acceptCall(): Promise<void> {
   if (state.status !== 'incoming' || !pendingOffer) return;
   set({ status: 'connecting' });
+  acquireWake();
   try {
     voice = makeVoice();
     await voice.startMic();

@@ -28,7 +28,7 @@ export type Palette = {
 
 export const darkPalette: Palette = {
   dark: true,
-  bg: '#0B0B0F',
+  bg: '#000000',
   surface: '#17181D',
   surface2: '#131419',
   border: '#2A2B33',

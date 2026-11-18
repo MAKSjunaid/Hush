@@ -37,7 +37,7 @@ function Gate() {
     SplashScreen.hideAsync().catch(() => {});
     const first = (segments[0] as string | undefined) ?? '';
     const isPublic = PUBLIC_ROUTES.has(first);
-    if (!token && !isPublic) router.replace('/welcome');
+    if (!token && !isPublic) router.replace('/login');
     else if (token && pendingKey && first !== 'recovery-key') router.replace('/recovery-key');
     else if (token && !pendingKey && (isPublic || first === '')) router.replace('/chats');
   }, [ready, token, pendingKey, segments, router]);
@@ -78,7 +78,7 @@ export default function RootLayout() {
     init();
   }, []);
 
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#0B0B0F' }} />;
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#000000' }} />;
   return (
     <SafeAreaProvider>
       <ThemeProvider>

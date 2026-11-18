@@ -2,13 +2,20 @@ import { Server } from 'socket.io';
 import { q, one, bumpStat, getSettingSync, getUser, cacheUser } from './db.js';
 import { TTLCache, registerCache } from './cache.js';
 import { userFromToken } from './auth.js';
-import { pushNewMessage } from './push.js';
+import { pushNewMessage, sendWebPush } from './push.js';
 import { deleteMedia } from './storage.js';
 import { config } from './config.js';
 
 let io = null;
 /** userId -> Set<socketId> */
 const online = new Map();
+// Briefly holds a ringing call's offer per callee, so if their app was backgrounded (socket asleep)
+// a push wakes them, and on reconnect we re-deliver the offer and it rings. Cleared on answer/hangup.
+const pendingCalls = new Map();
+function clearPendingCall(calleeId) {
+  const p = pendingCalls.get(calleeId);
+  if (p) { clearTimeout(p.timer); pendingCalls.delete(calleeId); }
+}
 
 export const isOnline = (userId) => online.has(userId);
 export const onlineCount = () => online.size;
@@ -227,6 +234,10 @@ export function attachRealtime(httpServer) {
       for (const d of delivered) emitTo(d.sender_id, 'delivered', { id: d.id, at: d.delivered_at });
     }
 
+    // If a call was ringing for this user while their app was asleep, deliver it now that they're back.
+    const pending = pendingCalls.get(userId);
+    if (pending) socket.emit('call:offer', { from: pending.from, sdp: pending.sdp, callId: pending.callId });
+
     const announcement = getSettingSync('announcement', null);
     if (announcement?.text) socket.emit('announcement', announcement);
 
@@ -394,11 +405,17 @@ export function attachRealtime(httpServer) {
       if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return reply?.({ error: 'Bad offer' });
       if (!(await canMessage(userId, to))) return reply?.({ error: 'Not a contact' });
       if (!isOnline(to)) return reply?.({ error: 'offline' });
-      emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId: String(p.callId || '') });
+      const callId = String(p.callId || '');
+      emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId });
+      // Buffer briefly + push, so a backgrounded phone still rings when it comes back within ~35s.
+      clearPendingCall(to);
+      pendingCalls.set(to, { from: userId, sdp: p.sdp, callId, timer: setTimeout(() => pendingCalls.delete(to), 35_000) });
+      getUser(to).then((u) => { if (u) sendWebPush(u, 'call').catch(() => {}); }).catch(() => {});
       reply?.({ ok: true });
     }));
     socket.on('call:answer', guard(async (p) => {
       if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return;
+      clearPendingCall(userId); // we answered — stop re-ringing
       if (await canMessage(userId, p.to)) emitTo(p.to, 'call:answer', { from: userId, sdp: p.sdp, callId: String(p.callId || '') });
     }));
     socket.on('call:ice', guard(async (p) => {
@@ -407,6 +424,7 @@ export function attachRealtime(httpServer) {
       if (await canMessage(userId, p.to)) emitTo(p.to, 'call:ice', { from: userId, candidate: p.candidate, callId: String(p.callId || '') });
     }));
     socket.on('call:hangup', guard(async (p) => {
+      clearPendingCall(p.to); clearPendingCall(userId); // stop any buffered re-ring for this call
       if (await canMessage(userId, p.to)) emitTo(p.to, 'call:hangup', { from: userId, callId: String(p.callId || ''), reason: String(p.reason || 'end').slice(0, 20) });
     }));
 
