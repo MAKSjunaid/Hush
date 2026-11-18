@@ -131,6 +131,7 @@ admin.get('/settings', wrap(async (_req, res) => {
     apkUrl: await getSetting('apkUrl', null),
     iosUrl: await getSetting('iosUrl', null),
     editWindowMinutes: await getSetting('editWindowMinutes', 15),
+    usernameCooldownDays: Number(await getSetting('usernameCooldownDays', 30)),
   });
 }));
 
@@ -149,6 +150,10 @@ admin.post('/settings', wrap(async (req, res) => {
   if ('editWindowMinutes' in b) {
     const n = Math.round(Number(b.editWindowMinutes));
     await setSetting('editWindowMinutes', Number.isFinite(n) ? Math.max(0, Math.min(1440, n)) : 15);
+  }
+  if ('usernameCooldownDays' in b) {
+    const n = Math.round(Number(b.usernameCooldownDays));
+    await setSetting('usernameCooldownDays', Number.isFinite(n) ? Math.max(0, Math.min(3650, n)) : 30);
   }
   for (const k of ['minAppVersion', 'latestAppVersion', 'apkUrl', 'iosUrl']) {
     if (k in b) await setSetting(k, b[k] ? String(b[k]).slice(0, 300) : null);

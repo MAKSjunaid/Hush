@@ -143,9 +143,15 @@ api.post('/me/username', requireUser, authLimit, wrap(async (req, res) => {
   const u = normalizeUsername(req.body.username);
   const err = validateUsername(u);
   if (err) return bad(res, err);
+  const cooldownDays = Number(await getSetting('usernameCooldownDays', 30)) || 0; // 0 = unlimited
   const last = req.user.username_changed_at;
-  if (last && Date.now() - new Date(last).getTime() < 30 * 864e5) {
-    return bad(res, 'You can change your username once every 30 days');
+  if (cooldownDays > 0 && last) {
+    const elapsed = Date.now() - new Date(last).getTime();
+    const windowMs = cooldownDays * 864e5;
+    if (elapsed < windowMs) {
+      const wait = Math.ceil((windowMs - elapsed) / 864e5);
+      return bad(res, `You can change your username once every ${cooldownDays} days — try again in ${wait} day${wait === 1 ? '' : 's'}`);
+    }
   }
   try {
     const user = await one('UPDATE users SET username = $2, username_changed_at = now() WHERE id = $1 RETURNING *',
