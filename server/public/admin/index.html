@@ -110,6 +110,7 @@
           <div style="flex:1"><label for="latv">Latest app version</label><input id="latv" type="text"></div>
         </div>
         <label for="editwin">Message edit window (minutes, 0 = editing off)</label><input id="editwin" type="number" min="0" max="1440" step="1">
+        <label for="unamecd">Username change cooldown (days, 0 = unlimited / change anytime)</label><input id="unamecd" type="number" min="0" max="3650" step="1">
         <div class="row" style="margin-top:16px"><button class="btn primary" id="saveSettings">Save</button><span class="muted" id="savedMsg"></span></div>
         <p class="note">Share one link with everyone: <b id="shareLink"></b> — Android gets the APK, iPhone gets the TestFlight link, and anyone can use Hush in Chrome or Safari.</p>
       </div>
@@ -217,10 +218,11 @@ async function loadSettings() {
   $('#maint').checked = !!s.maintenance; $('#ann').value = s.announcement?.text || '';
   $('#apk').value = s.apkUrl || ''; $('#ios').value = s.iosUrl || ''; $('#minv').value = s.minAppVersion || ''; $('#latv').value = s.latestAppVersion || '';
   $('#editwin').value = s.editWindowMinutes ?? 15;
+  $('#unamecd').value = s.usernameCooldownDays ?? 30;
   $('#shareLink').textContent = location.origin + '/get';
 }
 $('#saveSettings').onclick = async () => {
-  await api('/settings', { method: 'POST', body: { maintenance: $('#maint').checked, announcement: $('#ann').value, apkUrl: $('#apk').value, iosUrl: $('#ios').value, minAppVersion: $('#minv').value, latestAppVersion: $('#latv').value, editWindowMinutes: Number($('#editwin').value) } });
+  await api('/settings', { method: 'POST', body: { maintenance: $('#maint').checked, announcement: $('#ann').value, apkUrl: $('#apk').value, iosUrl: $('#ios').value, minAppVersion: $('#minv').value, latestAppVersion: $('#latv').value, editWindowMinutes: Number($('#editwin').value), usernameCooldownDays: Number($('#unamecd').value) } });
   $('#savedMsg').textContent = 'Saved'; setTimeout(() => $('#savedMsg').textContent = '', 2000);
 };
 
