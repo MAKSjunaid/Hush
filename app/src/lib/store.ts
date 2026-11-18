@@ -57,6 +57,7 @@ export type AppConfig = {
   mediaEnabled: boolean;
   editWindowMinutes?: number;
   vapidPublicKey?: string | null;
+  iceServers?: RTCIceServer[];
 };
 
 type State = {
@@ -281,6 +282,25 @@ function connectSocket() {
   socket.on('account_suspended', () => endSession('Your account has been suspended.'));
   socket.on('account_banned', () => endSession('Your account has been banned.'));
   socket.on('account_deleted', () => endSession(null));
+
+  // Voice-call signaling. The heavy WebRTC engine is loaded lazily (only when a call happens) via ./call.
+  const call = (fn: string, data: any) => import('./call').then((m) => (m as any)[fn]?.(data)).catch(() => {});
+  socket.on('call:offer', (d) => call('onOffer', d));
+  socket.on('call:answer', (d) => call('onAnswer', d));
+  socket.on('call:ice', (d) => call('onIce', d));
+  socket.on('call:hangup', (d) => call('onHangup', d));
+}
+
+/** Emit a call signaling event over the shared socket (with ack for offer). Used by the call module. */
+export function emitCall(event: string, data: any): Promise<any> {
+  if (!socket) return Promise.resolve({ error: 'offline' });
+  return new Promise((resolve) => {
+    socket!.timeout(8000).emit(event, data, (err: any, res: any) => resolve(err ? { error: 'timeout' } : res));
+  });
+}
+
+export function peerById(id: string): User | undefined {
+  return state.contacts.find((c) => c.user.id === id)?.user;
 }
 
 async function syncMessages() {
