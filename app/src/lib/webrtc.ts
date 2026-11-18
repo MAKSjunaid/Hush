@@ -22,6 +22,7 @@ export class VoiceCall {
   private remote: MediaStream = new MediaStream();
   private pendingIce: RTCIceCandidateInit[] = [];
   private remoteSet = false;
+  private closed = false;
 
   constructor(iceServers: RTCIceServer[] | undefined, private h: Handlers) {
     this.pc = new RTCPeerConnection({ iceServers: iceServers?.length ? iceServers : [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -35,7 +36,11 @@ export class VoiceCall {
 
   /** Grab the mic and add it to the connection. Throws if permission denied. */
   async startMic(): Promise<void> {
-    this.local = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    // If the call was already torn down while the mic prompt was open, release it immediately
+    // instead of leaving the mic on.
+    if (this.closed) { stream.getTracks().forEach((t) => t.stop()); return; }
+    this.local = stream;
     this.local.getTracks().forEach((t) => this.pc.addTrack(t, this.local!));
   }
 
@@ -80,8 +85,11 @@ export class VoiceCall {
   getRemoteStream(): MediaStream { return this.remote; }
 
   close() {
+    this.closed = true; // so a mic stream still being acquired gets stopped on arrival
     try { this.local?.getTracks().forEach((t) => t.stop()); } catch {}
     try { this.pc.getSenders().forEach((s) => s.track?.stop()); } catch {}
+    try { this.remote.getTracks().forEach((t) => t.stop()); } catch {}
+    try { this.pc.ontrack = null; this.pc.onicecandidate = null; this.pc.onconnectionstatechange = null; } catch {}
     try { this.pc.close(); } catch {}
     this.local = null;
   }
