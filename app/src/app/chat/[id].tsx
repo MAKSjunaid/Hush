@@ -15,6 +15,7 @@ import {
   Msg, peerOf, useStore, markSeen, purgeRead, setOpenChat, deleteChat, canEdit, editMessage, sendText, sendPhoto, fetchPhoto, unsend, react, retry, sendTyping, sendTypingText, markPhotoViewed, avatarUrl,
   reportScreenshot, setChatTimer, blockUser, report, removeContact, getState, decodeBase64,
 } from '@/lib/store';
+import { placeCall } from '@/lib/call';
 import { encodeBase64, safetyCode } from '@/lib/crypto';
 import { clock, countdown, lastSeenText, TIMER_OPTIONS, timerShort } from '@/lib/format';
 import { isWeb } from '@/lib/config';
@@ -221,6 +222,7 @@ export default function Chat() {
             <Ionicons name="timer-outline" size={15} color={c.accentText} />
             <T style={{ fontFamily: fonts.semibold, fontSize: 12 }} color={c.muted}>{timerShort(timer)}</T>
           </Pressable>
+          <IconButton icon="call-outline" label={`Voice call ${peer.displayName || peer.username}`} color={c.accentText} onPress={() => placeCall(peer)} />
           <IconButton icon="ellipsis-vertical" label="More options" color={c.muted} onPress={() => setSheet('more')} />
         </View>
 
