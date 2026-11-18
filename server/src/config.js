@@ -36,5 +36,21 @@ export const config = {
 
 export const webPushEnabled = () => Boolean(config.vapid.publicKey && config.vapid.privateKey);
 
+// ICE servers for voice calls. Free public STUN by default (no account/VM). Add your own TURN later
+// with TURN_URL / TURN_USERNAME / TURN_CREDENTIAL env vars — no code change needed.
+export function iceServers() {
+  const list = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  ];
+  if (process.env.TURN_URL) {
+    list.push({
+      urls: process.env.TURN_URL.split(',').map((s) => s.trim()),
+      username: process.env.TURN_USERNAME || undefined,
+      credential: process.env.TURN_CREDENTIAL || undefined,
+    });
+  }
+  return list;
+}
+
 export const r2Enabled = () =>
   Boolean(config.r2.accountId && config.r2.accessKeyId && config.r2.secretAccessKey);
