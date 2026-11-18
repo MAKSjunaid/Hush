@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "backgroundColor": "#0B0B0F",
+    "backgroundColor": "#000000",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.hush.chat",
@@ -40,8 +40,8 @@
       "name": "HushChat",
       "shortName": "HushChat",
       "description": "Private chat. Messages vanish once seen.",
-      "themeColor": "#0B0B0F",
-      "backgroundColor": "#0B0B0F",
+      "themeColor": "#000000",
+      "backgroundColor": "#000000",
       "display": "standalone",
       "startUrl": "/"
     },
@@ -54,10 +54,10 @@
         {
           "image": "./assets/splash-icon.png",
           "imageWidth": 120,
-          "backgroundColor": "#0B0B0F",
+          "backgroundColor": "#000000",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#0B0B0F"
+            "backgroundColor": "#000000"
           }
         }
       ],
