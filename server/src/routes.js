@@ -7,7 +7,7 @@ import {
 } from './auth.js';
 import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair } from './realtime.js';
 import { pushNewMessage } from './push.js';
-import { config } from './config.js';
+import { config, iceServers } from './config.js';
 import express from 'express';
 import { presignUpload, presignDownload, mediaEnabled, deleteMedia, checkSigned, dbPut, dbGet, DB_MAX_BYTES } from './storage.js';
 
@@ -37,6 +37,7 @@ api.get('/config', wrap(async (_req, res) => {
     mediaEnabled: mediaEnabled(),
     editWindowMinutes: Number(getSettingSync('editWindowMinutes', 15)),
     vapidPublicKey: config.vapid.publicKey || null, // public: the PWA needs it to subscribe to Web Push
+    iceServers: iceServers(), // STUN (+ optional TURN) for voice calls
   });
 }));
 

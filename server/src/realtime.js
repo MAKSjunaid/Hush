@@ -385,6 +385,31 @@ export function attachRealtime(httpServer) {
       if (await canMessage(userId, p.to)) emitTo(p.to, 'typing_text', { from: userId, ciphertext: p.ciphertext, nonce: p.nonce });
     }));
 
+    // ---- Voice call signaling (WebRTC) ----
+    // The server only relays the connection handshake between two contacts; the audio itself is
+    // peer-to-peer and end-to-end encrypted (DTLS-SRTP) and never touches the server.
+    const callIceLimit = rateLimiter(100, 10_000); // ICE candidates can be chatty during setup
+    socket.on('call:offer', guard(async (p, reply) => {
+      const to = String(p.to || '');
+      if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return reply?.({ error: 'Bad offer' });
+      if (!(await canMessage(userId, to))) return reply?.({ error: 'Not a contact' });
+      if (!isOnline(to)) return reply?.({ error: 'offline' });
+      emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId: String(p.callId || '') });
+      reply?.({ ok: true });
+    }));
+    socket.on('call:answer', guard(async (p) => {
+      if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return;
+      if (await canMessage(userId, p.to)) emitTo(p.to, 'call:answer', { from: userId, sdp: p.sdp, callId: String(p.callId || '') });
+    }));
+    socket.on('call:ice', guard(async (p) => {
+      if (!callIceLimit(userId)) return;
+      if (typeof p.candidate !== 'string' || p.candidate.length > 2000) return;
+      if (await canMessage(userId, p.to)) emitTo(p.to, 'call:ice', { from: userId, candidate: p.candidate, callId: String(p.callId || '') });
+    }));
+    socket.on('call:hangup', guard(async (p) => {
+      if (await canMessage(userId, p.to)) emitTo(p.to, 'call:hangup', { from: userId, callId: String(p.callId || ''), reason: String(p.reason || 'end').slice(0, 20) });
+    }));
+
     // Screenshot / screen-recording attempts become a line in the chat for both people.
     const captureEvent = (kind) => guard(async (p, reply) => {
       const other = String(p.with || '');

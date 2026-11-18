@@ -10,6 +10,7 @@ import { SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold } from '@expo-google-fon
 import { ThemeProvider, useTheme } from '@/lib/theme';
 import { init, useStore } from '@/lib/store';
 import { LockGate } from '@/components/LockGate';
+import { CallOverlay } from '@/components/CallOverlay';
 import { T } from '@/components/ui';
 import { APP_VERSION, API_URL } from '@/lib/config';
 import { compareVersions } from '@/lib/format';
@@ -51,6 +52,7 @@ function Gate() {
       {mustUpdate ? (
         <Banner text="A new version of HushChat is required. Tap to update." onPress={() => Linking.openURL(`${API_URL}/get`)} />
       ) : null}
+      {token ? <CallOverlay /> : null}
     </LockGate>
   );
 }
