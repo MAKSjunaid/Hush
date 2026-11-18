@@ -36,7 +36,10 @@ export class VoiceCall {
 
   /** Grab the mic and add it to the connection. Throws if permission denied. */
   async startMic(): Promise<void> {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
     // If the call was already torn down while the mic prompt was open, release it immediately
     // instead of leaving the mic on.
     if (this.closed) { stream.getTracks().forEach((t) => t.stop()); return; }

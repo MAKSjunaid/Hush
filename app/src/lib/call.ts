@@ -35,6 +35,10 @@ let iceBuffer: string[] = [];
 let ringTimeout: any = null;
 let remoteAudio: HTMLAudioElement | null = null;
 let wakeLock: any = null;
+let audioCtx: AudioContext | null = null;
+let gainNode: GainNode | null = null;
+let srcNode: MediaStreamAudioSourceNode | null = null;
+const CALL_GAIN = 3.2; // very loud by default — the <audio> element caps at 1.0, Web Audio lifts past it
 
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
@@ -65,7 +69,26 @@ function playRemote(stream: MediaStream) {
     document.body.appendChild(remoteAudio);
   }
   remoteAudio.srcObject = stream;
+  remoteAudio.volume = 1;
   remoteAudio.play?.().catch(() => {});
+  // Lift the volume well past the element's 1.0 ceiling with a Web Audio gain stage.
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (AC) {
+      if (!audioCtx) audioCtx = new AC();
+      audioCtx!.resume?.().catch(() => {});
+      try { srcNode?.disconnect(); } catch {}
+      try { gainNode?.disconnect(); } catch {}
+      srcNode = audioCtx!.createMediaStreamSource(stream);
+      gainNode = audioCtx!.createGain();
+      gainNode.gain.value = CALL_GAIN;
+      srcNode.connect(gainNode).connect(audioCtx!.destination);
+      // The element still "pulls" the remote stream (a Chrome quirk) but stays silent so we don't double-play.
+      remoteAudio.muted = true;
+    }
+  } catch {
+    if (remoteAudio) remoteAudio.muted = false; // Web Audio unavailable → plain element at full volume.
+  }
   applySpeaker();
 }
 
@@ -88,6 +111,10 @@ function cleanup() {
   pendingOffer = null;
   iceBuffer = [];
   if (remoteAudio) { try { remoteAudio.srcObject = null; remoteAudio.remove(); } catch {} remoteAudio = null; }
+  try { srcNode?.disconnect(); } catch {}
+  try { gainNode?.disconnect(); } catch {}
+  try { audioCtx?.close(); } catch {}
+  srcNode = null; gainNode = null; audioCtx = null;
 }
 
 function endCall(reason: string | null) {

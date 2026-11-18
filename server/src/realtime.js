@@ -404,13 +404,17 @@ export function attachRealtime(httpServer) {
       const to = String(p.to || '');
       if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return reply?.({ error: 'Bad offer' });
       if (!(await canMessage(userId, to))) return reply?.({ error: 'Not a contact' });
-      if (!isOnline(to)) return reply?.({ error: 'offline' });
       const callId = String(p.callId || '');
-      emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId });
-      // Buffer briefly + push, so a backgrounded phone still rings when it comes back within ~35s.
+      // Buffer the offer + send a push for EVERYONE — online or not. A minimized phone has already
+      // dropped its socket (so it reads as "offline"); the push is exactly what wakes it, and the
+      // buffered offer lets it catch the call when the callee taps the notification within ~35s.
       clearPendingCall(to);
       pendingCalls.set(to, { from: userId, sdp: p.sdp, callId, timer: setTimeout(() => pendingCalls.delete(to), 35_000) });
       getUser(to).then((u) => { if (u) sendWebPush(u, 'call').catch(() => {}); }).catch(() => {});
+      // Ring live too if their socket is currently connected.
+      if (isOnline(to)) emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId });
+      // Always "ringing" — the caller rings for ~35s while the push wakes the callee, instead of
+      // instantly failing with "unavailable" the moment the callee's background socket is gone.
       reply?.({ ok: true });
     }));
     socket.on('call:answer', guard(async (p) => {
