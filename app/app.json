@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "HushChat",
-    "slug": "hush",
+    "slug": "kalam",
+    "owner": "kalam121s-team",
     "scheme": "hush",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -91,7 +92,10 @@
       "typedRoutes": false
     },
     "extra": {
-      "apiUrl": "http://localhost:4000"
+      "apiUrl": "http://localhost:4000",
+      "eas": {
+        "projectId": "c8ec8fab-ebf8-4a2b-be17-7af9ca6d4cf6"
+      }
     },
     "runtimeVersion": {
       "policy": "appVersion"
