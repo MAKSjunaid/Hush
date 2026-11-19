@@ -12,7 +12,7 @@ const online = new Map();
 // Briefly holds a ringing call's offer per callee, so if their app was backgrounded (socket asleep)
 // a push wakes them, and on reconnect we re-deliver the offer and it rings. Cleared on answer/hangup.
 const pendingCalls = new Map();
-function clearPendingCall(calleeId) {
+export function clearPendingCall(calleeId) {
   const p = pendingCalls.get(calleeId);
   if (p) { clearTimeout(p.timer); pendingCalls.delete(calleeId); }
 }
@@ -236,7 +236,7 @@ export function attachRealtime(httpServer) {
 
     // If a call was ringing for this user while their app was asleep, deliver it now that they're back.
     const pending = pendingCalls.get(userId);
-    if (pending) socket.emit('call:offer', { from: pending.from, sdp: pending.sdp, callId: pending.callId });
+    if (pending) socket.emit('call:offer', { from: pending.from, sdp: pending.sdp, callId: pending.callId, name: pending.name });
 
     const announcement = getSettingSync('announcement', null);
     if (announcement?.text) socket.emit('announcement', announcement);
@@ -405,14 +405,18 @@ export function attachRealtime(httpServer) {
       if (typeof p.sdp !== 'string' || p.sdp.length > 20000) return reply?.({ error: 'Bad offer' });
       if (!(await canMessage(userId, to))) return reply?.({ error: 'Not a contact' });
       const callId = String(p.callId || '');
+      // Caller identity so the callee's notification + in-app screen show a real name/avatar, not "IC".
+      const caller = await getUser(userId).catch(() => null);
+      const callerName = caller?.display_name || caller?.username || 'Someone';
+      const hasAvatar = !!caller?.avatar_at;
       // Buffer the offer + send a push for EVERYONE — online or not. A minimized phone has already
       // dropped its socket (so it reads as "offline"); the push is exactly what wakes it, and the
       // buffered offer lets it catch the call when the callee taps the notification within ~35s.
       clearPendingCall(to);
-      pendingCalls.set(to, { from: userId, sdp: p.sdp, callId, timer: setTimeout(() => pendingCalls.delete(to), 35_000) });
-      getUser(to).then((u) => { if (u) sendWebPush(u, 'call').catch(() => {}); }).catch(() => {});
+      pendingCalls.set(to, { from: userId, sdp: p.sdp, callId, name: callerName, timer: setTimeout(() => pendingCalls.delete(to), 35_000) });
+      getUser(to).then((u) => { if (u) sendWebPush(u, 'call', { callId, from: userId, name: callerName, hasAvatar }).catch(() => {}); }).catch(() => {});
       // Ring live too if their socket is currently connected.
-      if (isOnline(to)) emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId });
+      if (isOnline(to)) emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId, name: callerName });
       // Always "ringing" — the caller rings for ~35s while the push wakes the callee, instead of
       // instantly failing with "unavailable" the moment the callee's background socket is gone.
       reply?.({ ok: true });

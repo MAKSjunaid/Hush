@@ -49,6 +49,18 @@ export async function enableWebPush(vapidPublicKey?: string | null): Promise<boo
   }
 }
 
+/** True only if the browser actually granted permission AND this device has a live push subscription. */
+export async function webPushActive(): Promise<boolean> {
+  if (!webPushSupported()) return false;
+  if (Notification.permission !== 'granted') return false;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return !!(await reg.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
 /** Remove this device's subscription (used when the user turns notifications off). */
 export async function disableWebPush(): Promise<void> {
   if (!webPushSupported()) return;

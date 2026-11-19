@@ -40,6 +40,64 @@ let gainNode: GainNode | null = null;
 let srcNode: MediaStreamAudioSourceNode | null = null;
 const CALL_GAIN = 3.2; // very loud by default — the <audio> element caps at 1.0, Web Audio lifts past it
 
+// --- ringtone (plays while the call screen is open; a closed PWA can't ring continuously — that's a
+// native-only ability) ---
+let ringCtx: AudioContext | null = null;
+let ringTimer: any = null;
+function startRing(dir: 'in' | 'out') {
+  stopRing();
+  if (typeof window === 'undefined') return;
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    ringCtx = new AC();
+    ringCtx!.resume?.().catch(() => {});
+    const beep = () => {
+      if (!ringCtx) return;
+      const base = ringCtx.currentTime;
+      const offsets = dir === 'in' ? [0, 0.4] : [0]; // incoming: double-ring; outgoing: single ringback
+      for (const off of offsets) {
+        const o = ringCtx.createOscillator();
+        const g = ringCtx.createGain();
+        o.type = 'sine';
+        o.frequency.value = dir === 'in' ? 480 : 440;
+        o.connect(g); g.connect(ringCtx.destination);
+        const s = base + off;
+        g.gain.setValueAtTime(0.0001, s);
+        g.gain.exponentialRampToValueAtTime(0.32, s + 0.04);
+        g.gain.setValueAtTime(0.32, s + 0.28);
+        g.gain.exponentialRampToValueAtTime(0.0001, s + 0.34);
+        o.start(s); o.stop(s + 0.4);
+      }
+    };
+    beep();
+    ringTimer = setInterval(beep, dir === 'in' ? 2400 : 3400);
+  } catch {}
+}
+function stopRing() {
+  if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+  try { ringCtx?.close(); } catch {}
+  ringCtx = null;
+}
+
+// --- auto-accept: when the user taps "Accept" on a call notification, the app opens and should pick
+// up the buffered call without a second tap. The service worker posts a message (open app) or we read
+// ?accept=<callId> on cold start. ---
+let autoAcceptId: string | null = null;
+let autoAcceptUntil = 0;
+export function armAutoAccept(id: string | null) { autoAcceptId = id || '*'; autoAcceptUntil = Date.now() + 25000; }
+if (typeof window !== 'undefined') {
+  try {
+    const a = new URLSearchParams(window.location.search).get('accept');
+    if (a) armAutoAccept(a);
+  } catch {}
+  try {
+    (navigator as any)?.serviceWorker?.addEventListener?.('message', (e: any) => {
+      if (e?.data?.hushAcceptCall) armAutoAccept(String(e.data.hushAcceptCall));
+    });
+  } catch {}
+}
+
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 async function acquireWake() {
@@ -103,6 +161,7 @@ function applySpeaker() {
 
 function cleanup() {
   if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
+  stopRing();
   releaseWake();
   try { voice?.close(); } catch {}
   voice = null;
@@ -149,6 +208,7 @@ export async function placeCall(peer: User): Promise<void> {
   callId = newId();
   set({ status: 'outgoing', peer, muted: false, speaker: false, startedAt: null, endedReason: null });
   acquireWake();
+  startRing('out');
   try {
     voice = makeVoice();
     await voice.startMic();
@@ -164,6 +224,7 @@ export async function placeCall(peer: User): Promise<void> {
 
 export async function acceptCall(): Promise<void> {
   if (state.status !== 'incoming' || !pendingOffer) return;
+  stopRing();
   set({ status: 'connecting' });
   acquireWake();
   try {
@@ -200,17 +261,25 @@ export function toggleSpeaker(): void {
 }
 
 // --- signaling handlers (called from the socket in store.ts) ---
-export function onOffer(d: { from: string; sdp: string; callId: string }): void {
+export function onOffer(d: { from: string; sdp: string; callId: string; name?: string }): void {
   if (state.status !== 'idle') { emitCall('call:hangup', { to: d.from, callId: d.callId, reason: 'busy' }); return; }
   peerId = d.from;
   callId = d.callId;
   pendingOffer = d.sdp;
-  set({ status: 'incoming', peer: peerById(d.from) || { id: d.from, username: '', displayName: 'Incoming call', publicKey: null }, muted: false, speaker: false, startedAt: null, endedReason: null });
+  set({ status: 'incoming', peer: peerById(d.from) || { id: d.from, username: '', displayName: d.name || 'Incoming call', publicKey: null }, muted: false, speaker: false, startedAt: null, endedReason: null });
   ringTimeout = setTimeout(() => { if (state.status === 'incoming') { emitCall('call:hangup', { to: peerId, callId, reason: 'timeout' }); endCall(null); } }, 35000);
+  // Tapped "Accept" on the notification? Pick up straight away. Otherwise ring.
+  if (autoAcceptUntil > Date.now() && (autoAcceptId === '*' || autoAcceptId === d.callId)) {
+    autoAcceptUntil = 0; autoAcceptId = null;
+    acceptCall();
+  } else {
+    startRing('in');
+  }
 }
 
 export async function onAnswer(d: { from: string; sdp: string; callId: string }): Promise<void> {
   if (!voice || d.callId !== callId) return;
+  stopRing(); // the other side picked up — stop the ringback
   set({ status: 'connecting' });
   try { await voice.setAnswer(d.sdp); } catch { endCall('failed'); }
 }

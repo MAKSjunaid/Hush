@@ -6,7 +6,7 @@ import { Avatar, Button, Field, Header, Row, Screen, Sheet, T, Toggle, tap } fro
 import { fonts, ThemeMode, useTheme } from '@/lib/theme';
 import {
   avatarUrl, changePassword, changeUsername, deleteAccount, disableNotifications, enableNotifications,
-  listBlocked, logout, Me, removeAvatar, setAvatar, unblockUser, updateMe, useStore, User,
+  listBlocked, logout, Me, notificationsActive, removeAvatar, setAvatar, unblockUser, updateMe, useStore, User,
 } from '@/lib/store';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -30,6 +30,7 @@ export default function Settings() {
   const [bioOn, setBioOn] = useState(false);
   const [bioAvail, setBioAvail] = useState(false);
   const [delay, setDelay] = useState(0);
+  const [notifOn, setNotifOn] = useState(false); // web: reflects real browser permission + subscription
 
   useEffect(() => {
     (async () => {
@@ -37,6 +38,7 @@ export default function Settings() {
       setBioOn(await getBiometricPref());
       setBioAvail(await biometricAvailable());
       setDelay(await getLockDelay());
+      if (isWeb) setNotifOn(await notificationsActive());
     })();
   }, []);
 
@@ -114,13 +116,22 @@ export default function Settings() {
           <Toggle
             label="Message notifications"
             sub={'Only ever says "New message" — never the text'}
-            value={s.notifications !== false}
+            value={isWeb ? notifOn : s.notifications !== false}
             onChange={async (v) => {
-              setPref('notifications', v);
-              // On web/PWA, turning this on is the user tap iOS needs to grant permission + subscribe.
+              // On web/PWA, turning this on is the user tap the browser needs to grant permission +
+              // subscribe. Reflect the REAL outcome: if permission is denied, the toggle stays off.
               if (isWeb) {
-                if (v) await enableNotifications();
-                else await disableNotifications();
+                if (v) {
+                  const ok = await enableNotifications();
+                  setNotifOn(ok);
+                  setPref('notifications', ok);
+                } else {
+                  await disableNotifications();
+                  setNotifOn(false);
+                  setPref('notifications', false);
+                }
+              } else {
+                setPref('notifications', v);
               }
             }}
           />

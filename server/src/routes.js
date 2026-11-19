@@ -5,7 +5,7 @@ import {
   normalizeUsername, validateUsername, validatePassword, hash, compare, newRecoveryKey,
   normalizeRecoveryKey, signToken, requireUser, publicUser, selfUser,
 } from './auth.js';
-import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair } from './realtime.js';
+import { emitTo, kickUser, isOnline, serializeMessage, invalidatePair, clearPendingCall } from './realtime.js';
 import { pushNewMessage } from './push.js';
 import { config, iceServers } from './config.js';
 import express from 'express';
@@ -244,6 +244,19 @@ api.delete('/me/web-push', requireUser, wrap(async (req, res) => {
   const endpoint = req.body?.endpoint;
   if (endpoint) await q('DELETE FROM web_push_subs WHERE endpoint = $1 AND user_id = $2', [endpoint, req.user.id]);
   else await q('DELETE FROM web_push_subs WHERE user_id = $1', [req.user.id]);
+  res.json({ ok: true });
+}));
+
+// "Decline" tapped on a call notification — the service worker calls this without an auth token.
+// Identity is proven by possession of the push subscription endpoint (only that device has it).
+api.post('/call-action', wrap(async (req, res) => {
+  const { action, callId, from, endpoint } = req.body || {};
+  if (action !== 'decline' || !endpoint) return res.json({ ok: false });
+  const { rows } = await q('SELECT user_id FROM web_push_subs WHERE endpoint = $1', [String(endpoint)]);
+  const me = rows[0]?.user_id;
+  if (!me) return res.json({ ok: false });
+  clearPendingCall(me);
+  if (from) emitTo(String(from), 'call:hangup', { from: me, callId: String(callId || ''), reason: 'decline' });
   res.json({ ok: true });
 }));
 

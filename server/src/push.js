@@ -15,14 +15,23 @@ if (webPushEnabled()) {
  * Content-free Web Push to the installed PWA (Android & iOS home-screen). Like native push, it only
  * ever says "New message" — the server can't read the text anyway.
  */
-export async function sendWebPush(recipient, kind = 'text') {
+export async function sendWebPush(recipient, kind = 'text', meta = null) {
   if (!webPushEnabled()) return;
   // Calls ring even if ordinary message notifications are muted — they're time-sensitive.
   if (kind !== 'call' && recipient.settings?.notifications === false) return;
   const { rows } = await q('SELECT endpoint, sub FROM web_push_subs WHERE user_id = $1', [recipient.id]);
   if (!rows.length) return;
-  const body = kind === 'call' ? 'Incoming voice call' : kind === 'request' ? 'Someone wants to chat with you' : 'New message';
-  const payload = JSON.stringify({ title: 'HushChat', body, type: kind });
+  let title = 'HushChat';
+  let body = kind === 'request' ? 'Someone wants to chat with you' : 'New message';
+  let data = { type: kind };
+  if (kind === 'call') {
+    // Caller name is shown (less sensitive than message text) so the callee knows who's calling.
+    title = meta?.name || 'Incoming call';
+    body = 'Incoming voice call';
+    data = { type: 'call', callId: meta?.callId || '', from: meta?.from || '', name: meta?.name || 'Someone' };
+    if (meta?.from && meta?.hasAvatar) data.icon = `/api/avatar/${meta.from}`;
+  }
+  const payload = JSON.stringify({ title, body, type: kind, data });
   await Promise.all(rows.map(async (r) => {
     try {
       await webpush.sendNotification(r.sub, payload, { TTL: 300, urgency: 'high', topic: 'hush-new' });

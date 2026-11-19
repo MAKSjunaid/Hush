@@ -838,4 +838,10 @@ export async function disableNotifications(): Promise<void> {
   await disableWebPush();
 }
 
+/** Web only: whether the browser actually granted permission AND this device has a live subscription. */
+export async function notificationsActive(): Promise<boolean> {
+  const { webPushActive } = await import('./webpush');
+  return webPushActive();
+}
+
 export { decodeBase64 };
