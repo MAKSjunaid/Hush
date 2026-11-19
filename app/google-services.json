@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "751906112147",
+    "project_id": "hushchat-d26ed",
+    "storage_bucket": "hushchat-d26ed.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:751906112147:android:4c8866f71aff9bce01c366",
+        "android_client_info": {
+          "package_name": "app.hush.chat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfIzfT_lPDVv-IvNmfgP0Klmolm_Ux9fg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
