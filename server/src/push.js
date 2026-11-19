@@ -45,6 +45,38 @@ export async function sendWebPush(recipient, kind = 'text', meta = null) {
 }
 
 /**
+ * Incoming-call push: wakes a closed/backgrounded phone with an "Incoming call" notification, over
+ * BOTH channels — Web Push (installed PWA) and Expo push (native app). High priority + the caller's
+ * name so the callee knows who it is. Tapping it opens the app, which then rings.
+ */
+export async function pushIncomingCall(recipient, meta = null) {
+  sendWebPush(recipient, 'call', meta).catch(() => {}); // installed PWA
+  const token = recipient.push_token;
+  if (!token || !Expo.isExpoPushToken(token)) return;
+  try {
+    const tickets = await expo.sendPushNotificationsAsync([
+      {
+        to: token,
+        title: meta?.name || 'Incoming call',
+        body: 'Incoming voice call',
+        sound: 'default',
+        priority: 'high',
+        data: { type: 'call', callId: meta?.callId || '', from: meta?.from || '' },
+        collapseId: 'hush-call',
+        channelId: 'messages',
+      },
+    ]);
+    for (const t of tickets) {
+      if (t.status === 'error' && t.details?.error === 'DeviceNotRegistered') {
+        await q('UPDATE users SET push_token = NULL WHERE id = $1', [recipient.id]);
+      }
+    }
+  } catch (e) {
+    console.warn('[push] call push failed', e.message);
+  }
+}
+
+/**
  * Sends a content-free notification. Message text never leaves the server
  * (the server can't read it anyway), so the push only says "New message".
  */
