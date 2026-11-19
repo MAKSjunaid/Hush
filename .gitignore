@@ -12,3 +12,6 @@ app/ios/
 .idea/shelf/
 *.log
 .DS_Store
+
+# Firebase service account key — SECRET, never commit
+*firebase-adminsdk*.json
