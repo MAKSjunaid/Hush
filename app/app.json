@@ -86,7 +86,8 @@
           "cameraPermission": false,
           "microphonePermission": "HushChat needs the microphone for voice calls."
         }
-      ]
+      ],
+      "expo-build-properties"
     ],
     "experiments": {
       "typedRoutes": false
