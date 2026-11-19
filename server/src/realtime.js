@@ -2,7 +2,7 @@ import { Server } from 'socket.io';
 import { q, one, bumpStat, getSettingSync, getUser, cacheUser } from './db.js';
 import { TTLCache, registerCache } from './cache.js';
 import { userFromToken } from './auth.js';
-import { pushNewMessage, sendWebPush } from './push.js';
+import { pushNewMessage, sendWebPush, pushIncomingCall } from './push.js';
 import { deleteMedia } from './storage.js';
 import { config } from './config.js';
 
@@ -414,7 +414,7 @@ export function attachRealtime(httpServer) {
       // buffered offer lets it catch the call when the callee taps the notification within ~35s.
       clearPendingCall(to);
       pendingCalls.set(to, { from: userId, sdp: p.sdp, callId, name: callerName, timer: setTimeout(() => pendingCalls.delete(to), 35_000) });
-      getUser(to).then((u) => { if (u) sendWebPush(u, 'call', { callId, from: userId, name: callerName, hasAvatar }).catch(() => {}); }).catch(() => {});
+      getUser(to).then((u) => { if (u) pushIncomingCall(u, { callId, from: userId, name: callerName, hasAvatar }); }).catch(() => {});
       // Ring live too if their socket is currently connected.
       if (isOnline(to)) emitTo(to, 'call:offer', { from: userId, sdp: p.sdp, callId, name: callerName });
       // Always "ringing" — the caller rings for ~35s while the push wakes the callee, instead of
