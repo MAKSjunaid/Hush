@@ -20,6 +20,7 @@
     },
     "android": {
       "package": "app.hush.chat",
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#8B7CFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
