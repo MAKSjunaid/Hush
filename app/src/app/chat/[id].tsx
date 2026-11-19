@@ -116,7 +116,15 @@ export default function Chat() {
     return () => clearInterval(t);
   }, [hasTimed]);
 
-  if (!me || !keys) return null;
+  if (!me || !keys) {
+    // Never render a blank (black) screen while the session/keys are still loading — show a spinner so
+    // the chat is obviously "loading" rather than broken.
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={c.accent} />
+      </SafeAreaView>
+    );
+  }
   if (!peer) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: c.bg, alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 }}>

@@ -52,12 +52,12 @@ export const nativeCall = {
     ensureSetup();
   },
 
-  // Someone is calling us: show the native incoming-call UI (rings + appears over the lock screen).
+  // Someone is calling us: show the native incoming-call UI. CallKeep's incoming screen already plays
+  // the system ringtone, so we do NOT also start InCallManager's ringtone (that caused a doubled tone).
   incoming(callId: string | null, name: string): void {
     if (!callId) return;
     ensureSetup();
     try { RNCallKeep.displayIncomingCall(callId, name, name, 'generic', false); } catch {}
-    try { InCallManager.startRingtone('_DEFAULT_'); } catch {}
   },
 
   // We're placing a call: register it with the OS and play a ringback tone.

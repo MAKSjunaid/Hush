@@ -277,7 +277,15 @@ export function toggleSpeaker(): void {
 
 // --- signaling handlers (called from the socket in store.ts) ---
 export function onOffer(d: { from: string; sdp: string; callId: string; name?: string }): void {
-  if (state.status !== 'idle') { emitCall('call:hangup', { to: d.from, callId: d.callId, reason: 'busy' }); return; }
+  const busy = state.status === 'incoming' || state.status === 'connecting' || state.status === 'active' || state.status === 'outgoing';
+  // The server re-delivers the buffered offer when a flaky phone reconnects. If it's the SAME call we're
+  // already ringing/handling, ignore it — do NOT bounce a "busy" back (that was ending calls on answer).
+  if (busy && callId === d.callId) return;
+  // Genuinely on a different call → busy.
+  if (busy) { emitCall('call:hangup', { to: d.from, callId: d.callId, reason: 'busy' }); return; }
+  // 'idle' or the brief post-call 'ended' flash → take the call, clearing any leftover state first so a
+  // stale timer can't fire a spurious "busy".
+  if (state.status === 'ended') cleanup();
   peerId = d.from;
   callId = d.callId;
   pendingOffer = d.sdp;
