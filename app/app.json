@@ -79,7 +79,13 @@
           "photosPermission": "Hush needs access to send view-once photos."
         }
       ],
-      "@config-plugins/react-native-webrtc"
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": false,
+          "microphonePermission": "HushChat needs the microphone for voice calls."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false
