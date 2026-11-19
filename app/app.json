@@ -20,6 +20,7 @@
     },
     "android": {
       "package": "app.hush.chat",
+      "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "backgroundColor": "#8B7CFF",
