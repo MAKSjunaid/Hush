@@ -78,7 +78,8 @@
         {
           "photosPermission": "Hush needs access to send view-once photos."
         }
-      ]
+      ],
+      "@config-plugins/react-native-webrtc"
     ],
     "experiments": {
       "typedRoutes": false
