@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { emitCall, peerById, getState, type User } from './store';
 import { VoiceCall, callSupported } from './webrtc';
+import { nativeCall } from './nativecall';
 
 export type CallStatus = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ended';
 export type CallState = {
@@ -98,6 +99,13 @@ if (typeof window !== 'undefined') {
   } catch {}
 }
 
+// Native call UI + background audio (CallKeep/InCallManager on phones; no-op on web). When the user
+// answers or ends from the NATIVE screen (e.g. on the lock screen), route it back into our store.
+nativeCall.setup({
+  onAnswer: () => { if (state.status === 'incoming') acceptCall(); },
+  onEnd: () => { if (state.status === 'incoming') declineCall(); else if (state.status !== 'idle') hangup(); },
+});
+
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 async function acquireWake() {
@@ -162,6 +170,7 @@ function applySpeaker() {
 function cleanup() {
   if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
   stopRing();
+  nativeCall.ended(callId);
   releaseWake();
   try { voice?.close(); } catch {}
   voice = null;
@@ -190,6 +199,7 @@ function makeVoice(): VoiceCall {
     onState: (st) => {
       if (st === 'connected') {
         if (ringTimeout) { clearTimeout(ringTimeout); ringTimeout = null; }
+        nativeCall.connected(callId);
         if (state.status !== 'active') set({ status: 'active', startedAt: Date.now() });
       } else if (st === 'failed') {
         endCall('failed');
@@ -209,6 +219,7 @@ export async function placeCall(peer: User): Promise<void> {
   set({ status: 'outgoing', peer, muted: false, speaker: false, startedAt: null, endedReason: null });
   acquireWake();
   startRing('out');
+  nativeCall.outgoing(callId, peer.displayName || peer.username || 'Call');
   try {
     voice = makeVoice();
     await voice.startMic();
@@ -225,6 +236,7 @@ export async function placeCall(peer: User): Promise<void> {
 export async function acceptCall(): Promise<void> {
   if (state.status !== 'incoming' || !pendingOffer) return;
   stopRing();
+  nativeCall.connected(callId);
   set({ status: 'connecting' });
   acquireWake();
   try {
@@ -252,12 +264,15 @@ export function hangup(): void {
 export function toggleMute(): void {
   const muted = !state.muted;
   voice?.setMuted(muted);
+  nativeCall.setMuted(callId, muted);
   set({ muted });
 }
 
 export function toggleSpeaker(): void {
-  set({ speaker: !state.speaker });
+  const on = !state.speaker;
+  set({ speaker: on });
   applySpeaker();
+  nativeCall.setSpeaker(on);
 }
 
 // --- signaling handlers (called from the socket in store.ts) ---
@@ -274,12 +289,14 @@ export function onOffer(d: { from: string; sdp: string; callId: string; name?: s
     acceptCall();
   } else {
     startRing('in');
+    nativeCall.incoming(callId, state.peer?.displayName || d.name || 'Incoming call');
   }
 }
 
 export async function onAnswer(d: { from: string; sdp: string; callId: string }): Promise<void> {
   if (!voice || d.callId !== callId) return;
   stopRing(); // the other side picked up — stop the ringback
+  nativeCall.connected(callId);
   set({ status: 'connecting' });
   try { await voice.setAnswer(d.sdp); } catch { endCall('failed'); }
 }

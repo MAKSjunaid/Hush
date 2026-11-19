@@ -91,10 +91,11 @@
         "expo-build-properties",
         {
           "android": {
-            "extraProguardRules": "-keep class org.webrtc.** { *; }\n-dontwarn org.webrtc.**"
+            "extraProguardRules": "-keep class org.webrtc.** { *; }\n-dontwarn org.webrtc.**\n-keep class io.wazo.callkeep.** { *; }\n-dontwarn io.wazo.callkeep.**"
           }
         }
-      ]
+      ],
+      "@config-plugins/react-native-callkeep"
     ],
     "experiments": {
       "typedRoutes": false
