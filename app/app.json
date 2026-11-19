@@ -87,7 +87,14 @@
           "microphonePermission": "HushChat needs the microphone for voice calls."
         }
       ],
-      "expo-build-properties"
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "-keep class org.webrtc.** { *; }\n-dontwarn org.webrtc.**"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": false
