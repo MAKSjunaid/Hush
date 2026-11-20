@@ -179,12 +179,12 @@ export function Field({
   const [focused, setFocused] = React.useState(false);
   const borderColor = error ? c.danger : focusColor ?? (focused ? c.accent : c.border);
   return (
-    <View style={{ gap: 8 }}>
+    <View style={{ gap: 6 }}>
       {label ? <T variant="label">{label}</T> : null}
       <View
         style={{
-          flexDirection: 'row', alignItems: 'center', gap: 6, height: 52, paddingLeft: 16, paddingRight: right ? 4 : 16,
-          borderRadius: 14, backgroundColor: c.surface, borderWidth: 1, borderColor,
+          flexDirection: 'row', alignItems: 'center', gap: 6, height: 46, paddingLeft: 14, paddingRight: right ? 4 : 14,
+          borderRadius: 12, backgroundColor: c.surface, borderWidth: 1, borderColor,
         }}
       >
         {prefix ? <Text style={{ fontFamily: fonts.regular, fontSize: 16, color: c.faint }}>{prefix}</Text> : null}
