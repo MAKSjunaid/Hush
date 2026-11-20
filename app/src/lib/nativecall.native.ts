@@ -1,56 +1,95 @@
-// Native (Android/iOS) call AUDIO via react-native-incall-manager ONLY.
-//
-// We deliberately do NOT use react-native-callkeep's native call screen (Android ConnectionService).
-// On Android that screen routes the call through the system telecom stack, which takes the microphone
-// away from the WebRTC call — so the other side can't hear you. Every call now runs on the in-app
-// call screen, and InCallManager just manages the audio session (mode, speaker, ringtone/ringback),
-// leaving the microphone and audio with WebRTC. This is the reliable path.
-//
-// Trade-off (intentional): an incoming call while the app is closed arrives as a push notification the
-// user taps to open the in-app call screen — there is no full-screen native ring. Metro loads this
-// file only on native builds (never on web).
+// Native (iOS/Android) call integration. This is what makes a call behave like a real phone call:
+//  • react-native-callkeep → a native incoming-call screen (shows over the lock screen) and, on
+//    Android, a foreground service that keeps the call + microphone ALIVE when the app is minimized,
+//    the screen is locked, or the display is off. This is the piece a PWA can't do.
+//  • react-native-incall-manager → audio session, speaker/earpiece routing, ringtone and ringback.
+// Everything is wrapped in try/catch so a device/OS quirk degrades gracefully to the in-app UI
+// instead of crashing the call. Metro loads this file only on native builds (never on web).
+import RNCallKeep from 'react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
 
-// Kept for API compatibility with call.ts (the in-app UI drives answer/decline directly now).
+let ready = false;
 let answerCb: () => void = () => {};
 let endCb: () => void = () => {};
+
+async function ensureSetup(): Promise<void> {
+  if (ready) return;
+  ready = true; // set first so concurrent calls don't double-register
+  try {
+    await RNCallKeep.setup({
+      ios: {
+        appName: 'HushChat',
+        supportsVideo: false,
+        maximumCallGroups: '1',
+        maximumCallsPerCallGroup: '1',
+      },
+      android: {
+        alertTitle: 'Allow calls',
+        alertDescription: 'HushChat needs this permission to show incoming calls',
+        cancelButton: 'Cancel',
+        okButton: 'OK',
+        additionalPermissions: [],
+        // The foreground service is what keeps audio running while the app is backgrounded/locked.
+        foregroundService: {
+          channelId: 'app.hush.chat.call',
+          channelName: 'HushChat calls',
+          notificationTitle: 'HushChat call in progress',
+        },
+      },
+    });
+    RNCallKeep.setAvailable(true);
+    RNCallKeep.addEventListener('answerCall', () => { try { answerCb(); } catch {} });
+    RNCallKeep.addEventListener('endCall', () => { try { endCb(); } catch {} });
+  } catch {
+    ready = false; // allow a retry on the next action
+  }
+}
 
 export const nativeCall = {
   setup(h: { onAnswer: () => void; onEnd: () => void }): void {
     answerCb = h.onAnswer;
     endCb = h.onEnd;
+    ensureSetup();
   },
 
-  // Incoming call: ring. The in-app screen shows Accept / Decline.
-  incoming(_callId: string | null, _name: string): void {
-    try { InCallManager.startRingtone('_DEFAULT_'); } catch {}
+  // Someone is calling us: show the native incoming-call UI. CallKeep's incoming screen already plays
+  // the system ringtone, so we do NOT also start InCallManager's ringtone (that caused a doubled tone).
+  incoming(callId: string | null, name: string): void {
+    if (!callId) return;
+    ensureSetup();
+    try { RNCallKeep.displayIncomingCall(callId, name, name, 'generic', false); } catch {}
   },
 
-  // Outgoing call: open the audio session and play a ringback tone.
-  outgoing(_callId: string | null, _name: string): void {
+  // We're placing a call: register it with the OS and play a ringback tone.
+  outgoing(callId: string | null, name: string): void {
+    if (!callId) return;
+    ensureSetup();
+    try { RNCallKeep.startCall(callId, name, name, 'generic', false); } catch {}
     try { InCallManager.start({ media: 'audio' }); } catch {}
     try { InCallManager.startRingback('_DTMF_'); } catch {}
   },
 
-  // Answered / media connected: stop ringing, keep the audio session active for WebRTC.
-  connected(_callId: string | null): void {
+  // Call is live (answered / media connected): stop ringing, keep the audio session active.
+  connected(callId: string | null): void {
     try { InCallManager.stopRingtone(); } catch {}
     try { InCallManager.stopRingback(); } catch {}
     try { InCallManager.start({ media: 'audio' }); } catch {}
+    try { if (callId) RNCallKeep.setCurrentCallActive(callId); } catch {}
   },
 
-  // Call finished: tear down the audio session.
-  ended(_callId: string | null): void {
+  // Call finished: tear down the native call + audio session.
+  ended(callId: string | null): void {
     try { InCallManager.stopRingtone(); } catch {}
     try { InCallManager.stopRingback(); } catch {}
     try { InCallManager.stop(); } catch {}
+    try { if (callId) RNCallKeep.endCall(callId); else RNCallKeep.endAllCalls(); } catch {}
   },
 
   setSpeaker(on: boolean): void {
     try { InCallManager.setForceSpeakerphoneOn(on); } catch {}
   },
 
-  setMuted(_callId: string | null, muted: boolean): void {
-    try { InCallManager.setMicrophoneMute(muted); } catch {}
+  setMuted(callId: string | null, muted: boolean): void {
+    try { if (callId) RNCallKeep.setMutedCall(callId, muted); } catch {}
   },
 };
