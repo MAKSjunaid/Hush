@@ -339,7 +339,7 @@ export default function Chat() {
               <IconButton icon="image-outline" label="Send a view-once photo" color={c.muted} onPress={pickPhoto} style={{ backgroundColor: c.surface }} />
             )
           ) : null}
-          <View style={{ flex: 1, minHeight: 44, maxHeight: 140, borderRadius: 22, backgroundColor: c.surface, borderWidth: c.dark ? 0 : 1, borderColor: c.border, paddingHorizontal: 16, justifyContent: 'center' }}>
+          <View style={{ flex: 1, minHeight: 42, maxHeight: 140, borderRadius: 21, backgroundColor: c.surface, borderWidth: c.dark ? 0 : 1, borderColor: c.border, paddingHorizontal: 15, justifyContent: 'center' }}>
             <TextInput
               ref={inputRef}
               accessibilityLabel="Message"
@@ -362,7 +362,7 @@ export default function Chat() {
                   inputRef.current?.focus(); // keep typing without re-tapping
                 }
               }}
-              style={[{ color: c.text, fontFamily: fonts.regular, fontSize: 16, paddingVertical: 11, maxHeight: 130 }, isWeb ? ({ outlineStyle: 'none' } as any) : null]}
+              style={[{ color: c.text, fontFamily: fonts.regular, fontSize: 16, paddingVertical: 9, maxHeight: 130 }, isWeb ? ({ outlineStyle: 'none' } as any) : null]}
             />
           </View>
           <Pressable
@@ -377,9 +377,9 @@ export default function Chat() {
               send();
               inputRef.current?.focus(); // keep focus so the keyboard stays up for the next message
             }}
-            style={({ pressed }) => ({ width: 44, height: 44, borderRadius: 22, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: text.trim() ? (pressed ? 0.8 : 1) : 0.4 })}
+            style={({ pressed }) => ({ width: 42, height: 42, borderRadius: 21, backgroundColor: c.accent, alignItems: 'center', justifyContent: 'center', opacity: text.trim() ? (pressed ? 0.8 : 1) : 0.4 })}
           >
-            <Ionicons name="arrow-up" size={22} color={c.onAccent} />
+            <Ionicons name="arrow-up" size={21} color={c.onAccent} />
           </Pressable>
         </View>
       </KeyboardAvoidingView>
