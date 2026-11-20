@@ -63,18 +63,18 @@ export default function Signup() {
   return (
     <Screen>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Header onBack={() => router.back()} />
+        <Header onBack={() => { if (router.canGoBack()) router.back(); else router.replace('/login'); }} />
         <ScrollView contentContainerStyle={{ gap: 22, paddingBottom: 24 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={{ gap: 8 }}>
             <T variant="title">Create your account</T>
             <T color={c.muted}>No email. No phone number. Just a name only you choose.</T>
           </View>
 
-          <Field label="Display name" placeholder="What friends see (optional)" value={displayName} onChangeText={setDisplayName} maxLength={40} autoComplete="name" />
+          <Field placeholder="Display name (optional)" accessibilityLabel="Display name" value={displayName} onChangeText={setDisplayName} maxLength={40} autoComplete="name" />
           <Field
-            label="Username"
+            placeholder="Username"
+            accessibilityLabel="Username"
             prefix="@"
-            placeholder="pick_a_name"
             value={username}
             onChangeText={(t) => setUsername(t.replace(/\s/g, '').toLowerCase())}
             autoCapitalize="none"
@@ -90,8 +90,8 @@ export default function Signup() {
           />
           <View style={{ gap: 8 }}>
             <Field
-              label="Password"
-              placeholder="At least 8 characters"
+              placeholder="Password (at least 8 characters)"
+              accessibilityLabel="Password"
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!show}
@@ -111,7 +111,8 @@ export default function Signup() {
             ) : null}
           </View>
           <Field
-            label="Confirm password"
+            placeholder="Confirm password"
+            accessibilityLabel="Confirm password"
             value={confirm}
             onChangeText={setConfirm}
             secureTextEntry={!show}

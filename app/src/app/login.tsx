@@ -39,7 +39,8 @@ export default function Login() {
             </View>
           </View>
           <Field
-            label="Username"
+            placeholder="Username"
+            accessibilityLabel="Username"
             prefix="@"
             value={username}
             onChangeText={(t) => setUsername(t.replace(/\s/g, '').toLowerCase())}
@@ -48,7 +49,8 @@ export default function Login() {
             autoComplete="username"
           />
           <Field
-            label="Password"
+            placeholder="Password"
+            accessibilityLabel="Password"
             value={password}
             onChangeText={setPassword}
             secureTextEntry={!show}
@@ -62,7 +64,7 @@ export default function Login() {
         </ScrollView>
         <View style={{ gap: 12, paddingBottom: 12 }}>
           <Button title="Log in" onPress={submit} loading={loading} disabled={!username || password.length < 1} />
-          <Button title="New here? Create an account" variant="ghost" small onPress={() => router.replace('/signup')} />
+          <Button title="New here? Create an account" variant="ghost" small onPress={() => router.push('/signup')} />
           <Notice icon="phone-portrait-outline" text="HushChat works on one device at a time. Logging in here signs you out everywhere else, and chats on the old device can't be opened here." />
         </View>
       </KeyboardAvoidingView>

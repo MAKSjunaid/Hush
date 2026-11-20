@@ -212,7 +212,7 @@ export default function Chat() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <KeyboardAvoidingView style={{ flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1, width: '100%', maxWidth: 820, alignSelf: 'center' }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         {/* header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 6, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border }}>
           <IconButton icon="chevron-back" label="Back to chats" onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/chats'); }} />
