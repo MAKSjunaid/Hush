@@ -103,7 +103,7 @@
       "typedRoutes": false
     },
     "extra": {
-      "apiUrl": "http://localhost:4000",
+      "apiUrl": "https://hushchat.onrender.com",
       "eas": {
         "projectId": "c8ec8fab-ebf8-4a2b-be17-7af9ca6d4cf6"
       }
