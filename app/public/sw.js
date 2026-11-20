@@ -1,6 +1,6 @@
 // Hush service worker: makes the web app installable and opens offline.
 // Only the app shell is cached — never messages or API responses.
-const CACHE = 'hush-shell-v1';
+const CACHE = 'hush-shell-v2';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon-192.png'])).then(() => self.skipWaiting()));
 });
