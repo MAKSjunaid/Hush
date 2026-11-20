@@ -136,7 +136,14 @@ function playRemote(stream: MediaStream) {
   }
   remoteAudio.srcObject = stream;
   remoteAudio.volume = 1;
+  remoteAudio.muted = false;
   remoteAudio.play?.().catch(() => {});
+  // iOS Safari outputs SILENCE when a remote WebRTC stream is routed through the Web Audio API,
+  // so on iPhone/iPad we play the <audio> element directly (no gain stage) — otherwise nothing is heard.
+  const isIOS = typeof navigator !== 'undefined'
+    && (/iP(hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
+  if (isIOS) { applySpeaker(); return; }
   // Lift the volume well past the element's 1.0 ceiling with a Web Audio gain stage.
   try {
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
