@@ -126,25 +126,49 @@ if (typeof document !== 'undefined') {
   });
 }
 
-function playRemote(stream: MediaStream) {
-  if (typeof document === 'undefined') return;
+// iPhone/iPad (incl. iPadOS reporting as Mac with touch). iOS Safari has two call-audio quirks we
+// must handle: (1) a remote WebRTC stream routed through the Web Audio API is SILENT, and (2) audio
+// playback must be unlocked from inside a user gesture.
+const IS_IOS = typeof navigator !== 'undefined'
+  && (/iP(hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
+
+function ensureRemoteAudioEl(): HTMLAudioElement | null {
+  if (typeof document === 'undefined') return null;
   if (!remoteAudio) {
     remoteAudio = document.createElement('audio');
     remoteAudio.autoplay = true;
+    remoteAudio.setAttribute('playsinline', '');
     (remoteAudio as any).playsInline = true;
     document.body.appendChild(remoteAudio);
   }
-  remoteAudio.srcObject = stream;
-  remoteAudio.volume = 1;
-  remoteAudio.muted = false;
-  remoteAudio.play?.().catch(() => {});
-  // iOS Safari outputs SILENCE when a remote WebRTC stream is routed through the Web Audio API,
-  // so on iPhone/iPad we play the <audio> element directly (no gain stage) — otherwise nothing is heard.
-  const isIOS = typeof navigator !== 'undefined'
-    && (/iP(hone|ad|od)/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
-  if (isIOS) { applySpeaker(); return; }
-  // Lift the volume well past the element's 1.0 ceiling with a Web Audio gain stage.
+  return remoteAudio;
+}
+
+// Called synchronously from the Call/Answer tap. Creates and unlocks the audio output inside the user
+// gesture so the remote voice can actually play a moment later — without this, iPhone stays silent.
+export function primeCallAudio(): void {
+  const el = ensureRemoteAudioEl();
+  if (!el) return;
+  el.muted = false;
+  el.volume = 1;
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (AC) { if (!audioCtx) audioCtx = new AC(); audioCtx!.resume?.().catch(() => {}); }
+  } catch {}
+  try { el.play?.().catch(() => {}); } catch {}
+}
+
+function playRemote(stream: MediaStream) {
+  const el = ensureRemoteAudioEl();
+  if (!el) return;
+  try { (el as any).srcObject = stream; } catch {}
+  el.volume = 1;
+  el.muted = false;
+  el.play?.().catch(() => {});
+  // On iOS, play the <audio> element directly (no Web Audio gain stage) — Web Audio is silent there.
+  if (IS_IOS) { applySpeaker(); return; }
+  // Elsewhere, lift the volume well past the element's 1.0 ceiling with a Web Audio gain stage.
   try {
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
     if (AC) {
@@ -157,10 +181,10 @@ function playRemote(stream: MediaStream) {
       gainNode.gain.value = CALL_GAIN;
       srcNode.connect(gainNode).connect(audioCtx!.destination);
       // The element still "pulls" the remote stream (a Chrome quirk) but stays silent so we don't double-play.
-      remoteAudio.muted = true;
+      el.muted = true;
     }
   } catch {
-    if (remoteAudio) remoteAudio.muted = false; // Web Audio unavailable → plain element at full volume.
+    el.muted = false; // Web Audio unavailable → plain element at full volume.
   }
   applySpeaker();
 }
@@ -221,6 +245,7 @@ function makeVoice(): VoiceCall {
 export async function placeCall(peer: User): Promise<void> {
   if (state.status !== 'idle') return;
   if (!callSupported()) { set({ status: 'ended', peer, endedReason: 'unsupported' }); setTimeout(() => set({ status: 'idle', peer: null, endedReason: null }), 1800); return; }
+  primeCallAudio(); // unlock audio output inside the tap gesture (needed on iOS)
   peerId = peer.id;
   callId = newId();
   set({ status: 'outgoing', peer, muted: false, speaker: false, startedAt: null, endedReason: null });
@@ -243,6 +268,7 @@ export async function placeCall(peer: User): Promise<void> {
 export async function acceptCall(): Promise<void> {
   if (state.status !== 'incoming' || !pendingOffer) return;
   stopRing();
+  primeCallAudio(); // unlock audio output inside the answer-tap gesture (needed on iOS)
   nativeCall.connected(callId);
   set({ status: 'connecting' });
   acquireWake();
