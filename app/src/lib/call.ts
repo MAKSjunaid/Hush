@@ -152,11 +152,26 @@ export function primeCallAudio(): void {
   if (!el) return;
   el.muted = false;
   el.volume = 1;
+  if (IS_IOS) {
+    // Do NOT create an AudioContext on iOS: WebKit flips into a "video conference" audio mode that
+    // routes call audio to the quiet earpiece. Reset the audio session, then just unlock the element.
+    try { const as = (navigator as any).audioSession; if (as) as.type = 'auto'; } catch {}
+    try { el.play?.().catch(() => {}); } catch {}
+    return;
+  }
   try {
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
     if (AC) { if (!audioCtx) audioCtx = new AC(); audioCtx!.resume?.().catch(() => {}); }
   } catch {}
   try { el.play?.().catch(() => {}); } catch {}
+}
+
+// iOS routes WebRTC call audio to the earpiece once the mic is live. Toggling the audio-session type
+// AFTER getUserMedia "kicks" WebKit into rerouting so the remote voice comes out of the main speaker.
+export function kickIOSAudioRoute(): void {
+  if (!IS_IOS) return;
+  try { const as = (navigator as any).audioSession; if (as) as.type = 'play-and-record'; } catch {}
+  try { remoteAudio?.play?.().catch(() => {}); } catch {}
 }
 
 function playRemote(stream: MediaStream) {
@@ -166,8 +181,9 @@ function playRemote(stream: MediaStream) {
   el.volume = 1;
   el.muted = false;
   el.play?.().catch(() => {});
-  // On iOS, play the <audio> element directly (no Web Audio gain stage) — Web Audio is silent there.
-  if (IS_IOS) { applySpeaker(); return; }
+  // On iOS, play the <audio> element directly (no Web Audio gain stage) — Web Audio is silent there,
+  // and re-kick the audio route so the remote voice comes out of the speaker, not the earpiece.
+  if (IS_IOS) { kickIOSAudioRoute(); applySpeaker(); return; }
   // Elsewhere, lift the volume well past the element's 1.0 ceiling with a Web Audio gain stage.
   try {
     const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
@@ -255,6 +271,7 @@ export async function placeCall(peer: User): Promise<void> {
   try {
     voice = makeVoice();
     await voice.startMic();
+    kickIOSAudioRoute(); // route call audio to the speaker on iOS (not the earpiece)
     const sdp = await voice.createOffer();
     const ack = await emitCall('call:offer', { to: peer.id, sdp, callId });
     if (ack?.error) { endCall(ack.error === 'offline' ? 'unavailable' : 'error'); return; }
@@ -275,6 +292,7 @@ export async function acceptCall(): Promise<void> {
   try {
     voice = makeVoice();
     await voice.startMic();
+    kickIOSAudioRoute(); // route call audio to the speaker on iOS (not the earpiece)
     const answer = await voice.acceptOffer(pendingOffer);
     pendingOffer = null;
     emitCall('call:answer', { to: peerId, sdp: answer, callId });
